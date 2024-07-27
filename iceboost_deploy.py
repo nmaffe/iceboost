@@ -31,8 +31,8 @@ parser.add_argument('--metadata_file', type=str, default="/media/maffe/nvme/glat
                         +"glathida-3.1.0/data/metadata35_hmineq0.0_tmin20050000_mean_grid_100.csv", help="Training dataset.")
 parser.add_argument('--mosaic', type=str,default="/media/maffe/nvme/Tandem-X-EDEM/", help="Path to Tandem-X-EDEM")
 parser.add_argument('--oggm', type=str,default="/home/maffe/OGGM/", help="Path to OGGM folder")
-parser.add_argument('--input_model_dir', type=str, default="/home/maffe/PycharmProjects/skynet/metadata/saved_iceboost/", help="Saved model dir.")
-parser.add_argument('--output_model_results', type=str, default="/home/maffe/PycharmProjects/skynet/metadata/saved_iceboost/model_deploy/", help="Saved model res.")
+parser.add_argument('--input_model_dir', type=str, default="/home/maffe/PycharmProjects/iceboost/saved_iceboost/", help="Saved model dir.")
+parser.add_argument('--output_model_results', type=str, default="/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_20240726/", help="Saved model res.")
 args = parser.parse_args()
 
 class CFG:
@@ -49,14 +49,14 @@ class CFG:
     n_points_regression = 30000
     features = featuresBig
 
-file_deploy = pd.read_csv('/home/maffe/PycharmProjects/skynet/metadata/deploy_list_id.csv', index_col='rgi')
+file_deploy = pd.read_csv(f'{args.input_model_dir}iceboost_deploy_list_id.csv', index_col='rgi')
 all_glacier_ids = file_deploy.values.flatten().tolist()
 
 glathida_rgis = pd.read_csv(args.metadata_file, low_memory=False)
 glathida_rgis.loc[glathida_rgis['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
 
 # Load the model
-model_filename = args.input_model_dir + 'iceboost_20240716.json'
+model_filename = args.input_model_dir + 'iceboost_20240726.json' # iceboost_20240716
 iceboost = xgb.Booster()
 iceboost.load_model(model_filename)
 
@@ -65,11 +65,11 @@ iceboost.load_model(model_filename)
 # *********************************************
 save_figs = False
 
-glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-19.00737', rgi=5, area=100, seed=None)
+glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-11.01450', rgi=5, area=100, seed=None)
 
 for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
-    #glacier_name_for_generation = 'RGI60-19.00119'
+    #glacier_name_for_generation = 'RGI60-18.02450'# 'RGI60-03.01738'
 
     #print(n, glacier_name_for_generation)
     if f"{glacier_name_for_generation}.png" in os.listdir(f"{args.output_model_results}"):
@@ -249,8 +249,8 @@ for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
         if save_figs:
             plt.savefig(f"{args.output_model_results}{glacier_name_for_generation}.png", dpi=100)
-        #plt.savefig(f'/home/maffe/Downloads/model_deploy/{glacier_name_for_generation}_200dpi.png', dpi=200)
-        #plt.savefig(f'/home/maffe/Downloads/model_deploy/{glacier_name_for_generation}_150dpi.png', dpi=150)
-        #plt.savefig(f'/home/maffe/Downloads/model_deploy/{glacier_name_for_generation}_100dpi.png', dpi=100)
+        #plt.savefig(f'/home/maffe/Downloads/iceboost_model_deploy/{glacier_name_for_generation}_200dpi.png', dpi=200)
+        #plt.savefig(f'/home/maffe/Downloads/iceboost_model_deploy/{glacier_name_for_generation}_150dpi.png', dpi=150)
+        #plt.savefig(f'/home/maffe/Downloads/iceboost_model_deploy/{glacier_name_for_generation}_100dpi.png', dpi=100)
 
-        plt.show()
+        #plt.show()
