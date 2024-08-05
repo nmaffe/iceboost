@@ -35,40 +35,13 @@ This program generates glacier metadata at some random locations inside the glac
 Input: glacier name (RGIId), how many points you want to generate. 
 Output: pandas dataframe with features calculated for each generated point. 
 
-Note: some features are calculated in model.py, not here.
 Note: the points are generated inside the glacier but outside nunataks (there is a check for this)
-
-Note: as of Feb 16, 2024 I decide to fill the nans in Millan veloity fields. I do that interpolating these fields.
-After that I interpolate at the locations of the generated points.
-
-# Note on missing values for Millan products. 
-In Millan the _FillValue fields depend on rgi. 
-# rgi1: None, None, None
-# rgi3, 7, 8, 11: 0, 0, 0
-# rgi14: -3.4028234663852886e+38, -3.4028234663852886e+38, 0.0
 
 Note: Millan and Farinotti products needs to be interpolated. Interpolation close to the borders may result in nans. 
 The interpolation method="nearest" yields much less nans close to borders if compared to linear
 interpolation and therefore is preferred. 
 
-Note the following policy for Millan special cases to produce vx, vy, v, ith_m:
-    1) There is no Millan data for such glacier. Data imputation: vy=vy=v=0.0 and ith_m=nan. 
-    2) In case the interpolation of Millan's fields yields nan because points are either too close to the margins. 
-    I keep the nans that will be however removed before returning the dataset.   
 """
-# todo: model needs improvements here RGI60-19.01882 (very high predictions for on the ice shelf)
-# todo: need improving convolve_fft for velocity (e.g. test case RGI60-03.01710 has boundary nans)
-# todo for speedup for geometry distance calculation: decrease k when i call distances, indices = kdtree.query
-# todo: speedups: for Millan velocity and ith fields I may use oggm (probably faster)
-# todo: use cupy-xarray instead of xarray
-# todo: use cupy instead of numpy. In particular convolving the slope could be done on GPU
-# using https://carpentries-incubator.github.io/lesson-gpu-programming/cupy.html
-# todo: for big glaciers the time needed to calculate the aspect features can be 0.6s. It is worth deleting these feats
-# todo: probsably i should first calculate the slope and then smooth it.
-# todo: smoothing the elevation can be probably be done using albumentation on gpu
-# todo: delete num_pixels_50.. just use (3,3), (5,5), (7,7), (9,9), (11,11) etc.. Also get rid of gfa
-# todo: have a look at slopegfa .. it has weird artifacts. RGI60-16.02944 is a good case
-
 
 def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
 
@@ -1386,8 +1359,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     #t1_dem_smooth = time.time()
     #print(f"Time to smooth dem: {t1_dem_smooth - t0_dem_smooth}")
 
-
-    # I first smoothing the elevation with 6 kernels and then calculating the slopes.
+    # I first smooth the elevation with 6 kernels and then calculating the slopes.
     # I fear I should first calculate the slope (1 field) and the smooth it using 6 kernels
     t0_dem_smooth = time.time()
     preserve_nans = True
@@ -1456,9 +1428,9 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     curv_50 = xrspatial.curvature(focus_filter_xarray_50_utm)
     curv_300 = xrspatial.curvature(focus_filter_xarray_300_utm)
     curv_af = xrspatial.curvature(focus_filter_xarray_af_utm)
-    aspect_50 = xrspatial.aspect(focus_filter_xarray_50_utm)
-    aspect_300 = xrspatial.aspect(focus_filter_xarray_300_utm)
-    aspect_af = xrspatial.aspect(focus_filter_xarray_af_utm)
+    #aspect_50 = xrspatial.aspect(focus_filter_xarray_50_utm)
+    #aspect_300 = xrspatial.aspect(focus_filter_xarray_300_utm)
+    #aspect_af = xrspatial.aspect(focus_filter_xarray_af_utm)
 
     # interpolate slope and dem
     elevation_data = focus_utm.interp(y=northings_xar, x=eastings_xar, method='linear').data
@@ -1491,9 +1463,9 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     curv_data_50 = curv_50.interp(y=northings_xar, x=eastings_xar, method='linear').data
     curv_data_300 = curv_300.interp(y=northings_xar, x=eastings_xar, method='linear').data
     curv_data_af = curv_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
-    aspect_data_50 = aspect_50.interp(y=northings_xar, x=eastings_xar, method='linear').data
-    aspect_data_300 = aspect_300.interp(y=northings_xar, x=eastings_xar, method='linear').data
-    aspect_data_af = aspect_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
+    #aspect_data_50 = aspect_50.interp(y=northings_xar, x=eastings_xar, method='linear').data
+    #aspect_data_300 = aspect_300.interp(y=northings_xar, x=eastings_xar, method='linear').data
+    #aspect_data_af = aspect_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
 
     # Hugonnet mass balance
     mbdf = utils.get_geodetic_mb_dataframe() # note that this takes 1.3s. I should avoid opening this for each glacier
@@ -1510,19 +1482,9 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     contains_nan = any(np.isnan(arr).any() for arr in [slope_50_data, slope_75_data, slope_100_data,
                                                        slope_125_data, slope_150_data, slope_300_data,
                                                        slope_450_data, slope_af_data,
-                                                       curv_data_50, curv_data_300, curv_data_af,
-                                                       aspect_data_50, aspect_data_300, aspect_data_af])
-    #contains_nan = any(np.isnan(arr).any() for arr in [slope_lon_data, slope_lat_data,
-    #                                                   slope_lon_data_filter_50, slope_lat_data_filter_50,
-    #                                                   slope_lon_data_filter_75, slope_lat_data_filter_75,
-    #                                                   slope_lon_data_filter_100, slope_lat_data_filter_100,
-    #                                                   slope_lon_data_filter_125, slope_lat_data_filter_125,
-    #                                                   slope_lon_data_filter_150, slope_lat_data_filter_150,
-    #                                                   slope_lon_data_filter_300, slope_lat_data_filter_300,
-    #                                                   slope_lon_data_filter_450, slope_lat_data_filter_450,
-    #                                                   slope_lon_data_filter_af, slope_lat_data_filter_af,
-    #                                                   curv_data_50, curv_data_300, curv_data_af,
-    #                                                   aspect_data_50, aspect_data_300, aspect_data_af])
+                                                       curv_data_50, curv_data_300, curv_data_af,])
+                                                       #aspect_data_50, aspect_data_300, aspect_data_af])
+
     if contains_nan:
         raise ValueError(f"Nan detected in elevation/slope calc. Check")
 
@@ -1562,9 +1524,9 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     points_df['curv_50'] = curv_data_50
     points_df['curv_300'] = curv_data_300
     points_df['curv_gfa'] = curv_data_af
-    points_df['aspect_50'] = aspect_data_50
-    points_df['aspect_300'] = aspect_data_300
-    points_df['aspect_gfa'] = aspect_data_af
+    #points_df['aspect_50'] = aspect_data_50
+    #points_df['aspect_300'] = aspect_data_300
+    #points_df['aspect_gfa'] = aspect_data_af
     points_df['dmdtda_hugo'] = glacier_dmdtda
 
     calculate_elevation_and_slopes_in_epsg_4326_and_show_differences_wrt_utm = False
@@ -1844,8 +1806,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
         kdtree = KDTree(geoms_coords_array)
 
         # Perform nearest neighbor search for each point and calculate minimum distances
-        # k can be decreased for speedup, e.g. k=100
-        # todo: change k for speedup
+        # k can be decreased for speedup to, e.g. k=10000
         distances, indices = kdtree.query(points_coords_array, k=min(10000,len(geoseries_geometries_epsg)))
         min_distances = np.min(distances, axis=1)
 
@@ -2119,6 +2080,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     # ---------------------------------------------------------------------------------------------
     """ Add features """
     points_df['elevation_from_zmin'] = points_df['elevation'] - points_df['Zmin']
+    points_df['deltaZ'] = points_df['Zmax'] - points_df['Zmin']
 
     # ---------------------------------------------------------------------------------------------
     """ Data imputation """
@@ -2234,9 +2196,8 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
 
 if __name__ == "__main__":
 
-    # todo: cannot catch millan ith_m solution for RGI60-17.06074 !!!!!
     glacier_name =  'RGI60-17.06074'# 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
-    # ultra weird: RGI60-02.03411 millan ha ith ma non ha velocita
+    # ultra weird: RGI60-02.03411 millan has ith but no ice velocity
     # 'RGI60-05.10315' #RGI60-09.00909
 
     #dem_rgi = fetch_dem(folder_mosaic=args.mosaic, rgi=rgi)
@@ -2245,19 +2206,3 @@ if __name__ == "__main__":
                                             n=30000,
                                             seed=42,
                                             verbose=True)
-
-#'RGI60-05.10137' #'RGI60-07.00832' #'RGI60-14.20030' # 'RGI60-07.00607'
-# RGI60-17.15540 test for total millan velocity imputation
-# 'RGI60-07.00228' should be a multiplygon
-# 'RGI60-03.01710'
-# RGI60-11.00781 has only 1 neighbor
-# RGI60-08.00001 has no Millan data
-# RGI60-11.00846 has multiple intersects with neighbors
-# RGI60-11.02774 has no neighbors
-#RGI60-11.02884 has no neighbors
-#'RGI60-11.01450' Aletsch # RGI60-11.02774
-#'RGI60-01.01701'
-# RGI60-07.00832
-# RGI60-14.06794 Baltoro
-
-# to be checked RGI60-05.15507 !!
