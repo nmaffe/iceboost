@@ -20,6 +20,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 
 import xgboost as xgb
+import catboost as cb
 import optuna
 import shap
 from fetch_glacier_metadata import populate_glacier_with_metadata
@@ -32,7 +33,9 @@ parser.add_argument('--metadata_file', type=str, default="/media/maffe/nvme/glat
 parser.add_argument('--mosaic', type=str,default="/media/maffe/nvme/Tandem-X-EDEM/", help="Path to Tandem-X-EDEM")
 parser.add_argument('--oggm', type=str,default="/home/maffe/OGGM/", help="Path to OGGM folder")
 parser.add_argument('--input_model_dir', type=str, default="/home/maffe/PycharmProjects/iceboost/saved_iceboost/", help="Saved model dir.")
-parser.add_argument('--output_model_results', type=str, default="/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_20240726/", help="Saved model res.")
+parser.add_argument('--output_model_results', type=str, default="/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20240731/", help="Saved model res.")
+parser.add_argument('--save_figs', type=int, default=0, help="Save deploy figures")
+
 args = parser.parse_args()
 
 class CFG:
@@ -55,21 +58,24 @@ all_glacier_ids = file_deploy.values.flatten().tolist()
 glathida_rgis = pd.read_csv(args.metadata_file, low_memory=False)
 glathida_rgis.loc[glathida_rgis['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
 
-# Load the model
-model_filename = args.input_model_dir + 'iceboost_20240726.json' # iceboost_20240716
-iceboost = xgb.Booster()
-iceboost.load_model(model_filename)
+# Load the model(s)
+model_xgb_filename = args.input_model_dir + 'iceboost_xgb_20240731.json'
+iceboost_xgb = xgb.Booster()
+iceboost_xgb.load_model(model_xgb_filename)
+
+model_cat_filename = args.input_model_dir + 'iceboost_cat_20240731.cbm'
+iceboost_cat = cb.CatBoostRegressor()
+iceboost_cat.load_model(model_cat_filename, format='cbm')
 
 # *********************************************
 # Model deploy
 # *********************************************
-save_figs = False
 
 glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-11.01450', rgi=5, area=100, seed=None)
 
 for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
-    #glacier_name_for_generation = 'RGI60-18.02450'# 'RGI60-03.01738'
+    #glacier_name_for_generation = 'RGI60-03.01710'
 
     #print(n, glacier_name_for_generation)
     if f"{glacier_name_for_generation}.png" in os.listdir(f"{args.output_model_results}"):
@@ -78,7 +84,6 @@ for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
     test_glacier = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation,
                                                   n=CFG.n_points_regression, seed=42, verbose=True)
-    test_glacier['deltaZ'] = test_glacier['Zmax'] - test_glacier['Zmin']
     test_glacier_rgi = glacier_name_for_generation[6:8]
 
     # Begin to extract all necessary things to plot the result
@@ -112,7 +117,11 @@ for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
     dtest = xgb.DMatrix(data=X_test_glacier)
 
-    y_preds_glacier = iceboost.predict(dtest)
+    y_preds_glacier_xgb = iceboost_xgb.predict(dtest)
+    y_preds_glacier_cat = iceboost_cat.predict(X_test_glacier)
+
+    # ensemble
+    y_preds_glacier = 0.5 * (y_preds_glacier_xgb + y_preds_glacier_cat)
 
     # Set negative predictions to zero
     y_preds_glacier = np.where(y_preds_glacier < 0, 0, y_preds_glacier)
@@ -244,13 +253,10 @@ for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
         ax2.axis('off')
         ax3.axis('off')
 
-        #fig.suptitle(f'{glacier_name_for_generation}', fontsize=13)
         plt.tight_layout()
 
-        if save_figs:
+        if args.save_figs:
             plt.savefig(f"{args.output_model_results}{glacier_name_for_generation}.png", dpi=100)
-        #plt.savefig(f'/home/maffe/Downloads/iceboost_model_deploy/{glacier_name_for_generation}_200dpi.png', dpi=200)
-        #plt.savefig(f'/home/maffe/Downloads/iceboost_model_deploy/{glacier_name_for_generation}_150dpi.png', dpi=150)
-        #plt.savefig(f'/home/maffe/Downloads/iceboost_model_deploy/{glacier_name_for_generation}_100dpi.png', dpi=100)
 
-        #plt.show()
+        plt.show()
+        plt.close()
