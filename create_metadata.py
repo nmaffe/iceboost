@@ -79,27 +79,6 @@ parser.add_argument('--save_outname', type=str,
             default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata35",
             help="Saved dataframe name.")
 
-#todo: whenever i call clip_box i need to check if there is only 1 measurement !
-#todo: change all reprojecting method from nearest to something else, like bisampling. Also in all .to_crs(...)
-# todo: Slope from oggm: worth thicking of calculating it myself ?
-
-# todo:
-#  1) Bonus: add feature slope interpolation at closest point.
-#  2) zmin, zmax, zmed are currently imported from oggm. I think using tandemx could be better ?
-#  3) Add connectivity to ice sheet ? that may help glaciers in rgi 5, 19
-#  4) Curvature: c50 and cgfa are pretty useless. I would rather delete those and add c450.
-#  5) add length of glacier perimeter
-#  6) add glacier nunatak area ratio to total
-
-#todo: check that whenever i reproject i use the nodata field, see fetch_glacier_metadata.py:
-# focus_utm = focus.rio.reproject(glacier_epsg, resampling=rasterio.enums.Resampling.bilinear, nodata=-9999)
-
-# todo: PROBLEMS
-#  distance from border is flawed in rgi 5 and 19 since my geometries no not include the ice sheet :) I should include
-#  the ice sheet geometry. An easier alternative would be to only consider in these regions the distance from the cluster
-#  nunataks, and remove the external boundary from the calculation. If the cluster does not contain nunataks
-#  then yes consider the cluster external geometry
-
 
 # Setup oggm
 utils.get_rgi_dir(version='62')
@@ -2272,7 +2251,6 @@ def add_dist_from_boder_using_geometries(glathida):
                 if make_check2:
                     easting, nothing, zonenum, zonelett, epsg = from_lat_lon_to_utm_and_epsg(lat, lon)
                     if epsg != glacier_epsg:
-                        # todo: maybe need to correct for this.
                         print(f"Note differet UTM zones. Point espg {epsg} and glacier center epsg {glacier_epsg}.")
 
                 # Decide whether point is inside a nunatak. If yes set the distance to nan
@@ -2323,7 +2301,6 @@ def add_dist_from_boder_using_geometries(glathida):
                         min_dist_KDTree = distances[0,0] # np.min(distances, axis=1)) or equivalently distances[:,0]
                         closest_point_index = indices[0, 0]
                         closest_point = Point(geoms_coords_array[closest_point_index])
-                        # todo: convert to lat lon and return it add slope calculation method
                         #tqdm.write(f"{min_dist_KDTree}")
                         #tqdm.write(f"{closest_point, nearest_point_on_boundary}")
 
@@ -2884,68 +2861,32 @@ def add_t2m(glathida, path_ERA5_t2m_folder):
 
 if __name__ == '__main__':
 
-    run_create_dataset = True
-    if run_create_dataset:
-        print(f'Begin Metadata dataset creation !')
-        t0 = time.time()
+    print(f'Begin Metadata dataset creation !')
+    t0 = time.time()
 
-        #glathida = pd.read_csv(args.path_ttt_csv, low_memory=False)
-        #glathida = add_rgi(glathida, args.path_O1Regions_shp)
-        #glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
-        #glathida.to_csv("/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata_rgi_oggm.csv", index=False)
-        #glathida = pd.read_csv("/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata12.csv", low_memory=False)
-        #glathida = add_slopes_elevation(glathida, args.mosaic)
-        #glathida = add_smb(glathida, args.RACMO_folder)
-        #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
-        #glathida = add_dist_from_boder_using_geometries(glathida)
-        #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
-        #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
+    #glathida = pd.read_csv(args.path_ttt_csv, low_memory=False)
+    #glathida = add_rgi(glathida, args.path_O1Regions_shp)
+    #glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
+    #glathida.to_csv("/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata_rgi_oggm.csv", index=False)
+    #glathida = add_slopes_elevation(glathida, args.mosaic)
+    #glathida = add_smb(glathida, args.RACMO_folder)
+    #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
+    #glathida = add_dist_from_boder_using_geometries(glathida)
+    #glathida = add_dist_from_water(glathida, args.GSHHG_folder)
+    #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
+    #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
 
-        glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'metadata34.csv'), low_memory=False)
-        glathida = add_dist_from_water(glathida, args.GSHHG_folder)
-        #glathida = add_smb(glathida, args.RACMO_folder)
-        #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
-        #glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
-        #glathida = add_dist_from_boder_using_geometries(glathida)
-        #glathida = add_slopes_elevation(glathida, args.mosaic)
-        #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
-        #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
+    glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'metadata34.csv'), low_memory=False)
+    glathida = add_dist_from_water(glathida, args.GSHHG_folder)
+    #glathida = add_smb(glathida, args.RACMO_folder)
+    #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
+    #glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
+    #glathida = add_dist_from_boder_using_geometries(glathida)
+    #glathida = add_slopes_elevation(glathida, args.mosaic)
+    #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
+    #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
 
-        if args.save:
-            glathida.to_csv(f'{args.save_outname}.csv', index=False)
-            #glathida.to_parquet(f'{args.save_outname}.parquet', index=False, engine='fastparquet')
-            print(f"Metadata dataset saved: {args.save_outname}")
-        print(f'Finished in {(time.time()-t0)/60} minutes. Bye bye.')
-        exit()
-
-
-    # Run some stuff
-    glathida = pd.read_csv(args.path_ttt_csv.replace('.csv', '_final4.csv'), low_memory=False)
-    pd.set_option('display.max_columns', None)
-    rgis = [3, 7, 8, 11, 18]
-    for rgi in rgis:
-
-        glathida_i = glathida.loc[((glathida['RGI'] == rgi) & (glathida['SURVEY_DATE'] > 20050000))]
-
-        print(f'{rgi} - {len(glathida_i)}')
-
-        print(glathida_i.describe())
-        """    'Area', 'Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax'"""
-        fig, axes = plt.subplots(4,2)
-        ax1, ax2, ax3, ax4, ax5, ax6, ax7, ax8 = axes.flatten()
-        ax1.hist(glathida_i['Area'], bins=100)
-        ax2.hist(glathida_i['Zmin'], bins=100)
-        ax3.hist(glathida_i['Zmed'], bins=100)
-        ax4.hist(glathida_i['Zmax'], bins=100)
-        ax5.hist(glathida_i['Slope'], bins=100)
-        ax6.hist(glathida_i['Lmax'], bins=100)
-        ax7.hist(glathida_i['Aspect'], bins=100)
-        ax8.hist(glathida_i['TermType'], bins=100)
-        plt.show()
-
-        input('next')
-
-        # Correlations between varibles
-        # print(glathida_i.corr(method='pearson', numeric_only=True)['THICKNESS'].abs().sort_values(ascending=False))
-
-    exit()
+    if args.save:
+        glathida.to_csv(f'{args.save_outname}.csv', index=False)
+        print(f"Metadata dataset saved: {args.save_outname}")
+    print(f'Finished in {(time.time()-t0)/60} minutes. Bye bye.')
