@@ -5,9 +5,6 @@ import pandas as pd
 from scipy import stats
 import matplotlib.pyplot as plt
 
-# Suppress RuntimeWarning
-#warnings.filterwarnings("ignore", category=RuntimeWarning)
-
 """
 This program imports the generated metadata dataset from create_metadata.py and:
 1. Processing:
@@ -16,7 +13,7 @@ This program imports the generated metadata dataset from create_metadata.py and:
     - Retain only some final features and remove any nan.
 2. Gridding:
     - gridding is done computing the mean of each feature in all pixels that form the grid, which is specified by
-    the parameter --nbins_grid_latlon (default=20)
+    the parameter --nbins_grid_latlon (default=100)
     
 The processed and gridded dataframe is finally saved.
 """
@@ -168,7 +165,8 @@ for n, rgiid in enumerate(rgi_ids):
 
         xs = xcenters[x_indices]
         ys = ycenters[y_indices]
-        # In the old version we only store non-nans. In the new one we keep them and remove in the end from all features except for ith_m, ith_f
+        # In the old version we only store non-nans. In the new one we keep them and
+        # remove in the end from all features except for ith_m, ith_f
         #zs = H[non_nan_mask]
         zs = H[x_indices,y_indices]
 
@@ -232,8 +230,8 @@ print(f"Finished. No. original measurements {len(glathida)} down to {len(glathid
 #print(glathida_gridded.isna().sum())
 
 # Remove all nans from all features except for ith_m and ith_f
-# todo: i see a huge amount of nans are removed, which are neither ith_m nor ith_f. what are they ?
 glathida_gridded = glathida_gridded.dropna(subset=cols_dropna)
+#print(glathida_gridded.isna().sum())
 
 print(f"Finished. No. original measurements {len(glathida)} down to {len(glathida_gridded)}, divided into:")
 print(f"{glathida_gridded['RGI'].value_counts()}")
