@@ -19,14 +19,12 @@ from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from sklearn.manifold import TSNE
 
 import xgboost as xgb
+import catboost as cb
 import optuna
 import shap
 from fetch_glacier_metadata import populate_glacier_with_metadata
 from create_rgi_mosaic_tanxedem import create_glacier_tile_dem_mosaic
 from utils_metadata import calc_volume_glacier, get_random_glacier_rgiid, create_train_test, get_cmap
-
-#import warnings
-#warnings.filterwarnings('ignore')
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--metadata_file', type=str, default="/media/maffe/nvme/glathida/glathida-3.1.0/"
@@ -36,12 +34,10 @@ parser.add_argument('--farinotti_icethickness_folder', type=str,default="/media/
 parser.add_argument('--mosaic', type=str,default="/media/maffe/nvme/Tandem-X-EDEM/", help="Path to Tandem-X-EDEM")
 parser.add_argument('--oggm', type=str,default="/home/maffe/OGGM/", help="Path to OGGM folder")
 parser.add_argument('--save_model', type=int, default=0, help="Save the model")
-parser.add_argument('--save_outdir', type=str, default="/home/maffe/PycharmProjects/skynet/metadata/saved_iceboost/", help="Saved model dir.")
-parser.add_argument('--save_outname', type=str, default="iceboost", help="Saved model name.")
+parser.add_argument('--save_outdir', type=str, default="/home/maffe/PycharmProjects/iceboost/saved_iceboost/", help="Saved model dir.")
 
 args = parser.parse_args()
 utils.get_rgi_dir(version='62')
-
 
 def custom_loss(elevation):
     def loss(y_true, y_pred):
@@ -88,22 +84,25 @@ class CFG:
 
     xgb_params = {'tree_method': "hist",
                    'device': 'cuda',
-                    'lambda': 0.00878,
-                    'alpha': 6.3, #6.3
-                    'colsample_bytree': 0.8459,
-                    'subsample': 0.809,
-                    'learning_rate': 0.07,
-                    #'n_estimators': 537,#537
-                    #'num_boost_round': 537,
-                    'max_depth': 15, # 15
-                    'min_child_weight': 3,
-                    'gamma': 0.0803458919901354,
+                    'lambda': 76.814,#0.00878,
+                    'alpha': 76.374, #6.3
+                    'colsample_bytree': 0.9388, ## 0.8459,
+                    'subsample': 0.741501, #0.809,
+                    'learning_rate': 0.079244, #0.07,
+                    'max_depth': 20, # 15
+                    'min_child_weight': 19, #3,
+                    'gamma': 0.18611, #0.0803458919901354,
                     'objective': 'reg:squarederror' #placeholder if custom loss is used
-                    } #
-    #model = xgb.XGBRegressor(n_estimators=537, max_depth=15, learning_rate=0.07, min_child_weight=8,
-    #                        subsample=0.808, gamma=2.303, alpha=0.698, reg_lambda=5.009,
-    #                         objective=xgbloss, tree_method="gpu_hist")
-    n_rounds = 1
+                    }
+    cat_params = {
+        'iterations': 10000,
+        'depth': 6, #11,
+        'learning_rate': 0.1, #0.12393,
+        #'min_data_in_leaf': 44,
+        #'l2_leaf_reg': 74.48
+    }
+
+    n_rounds = 3
     n_points_regression = 30000
     run_umap_tsne = False
     run_shap = False
@@ -120,29 +119,15 @@ glathida_rgis.loc[glathida_rgis['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-03.01517'])]
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-03.02467'])]
 
-# Replace zeros
-#glathida_rgis_specific = glathida_rgis.loc[glathida_rgis['RGIId'] == 'RGI60-03.01517']
+#glathida_rgis_specific = glathida_rgis.loc[glathida_rgis['RGI'] == 1]
 #fig, ax = plt.subplots()
 #s = ax.scatter(x=glathida_rgis_specific['POINT_LON'], y=glathida_rgis_specific['POINT_LAT'],
-#               c=glathida_rgis_specific['THICKNESS'], s=50, cmap='jet', vmin=0, vmax=750)
+#               c=glathida_rgis_specific['THICKNESS'], s=50, cmap='jet')
 #cbar = plt.colorbar(s)
 #plt.show()
 
-# Remove zeros by replacing them with Millan and Farinotti average
-#glathida_rgis.loc[glathida_rgis['THICKNESS'] == 0, 'THICKNESS'] = glathida_rgis.loc[glathida_rgis['THICKNESS'] == 0, ['ith_m', 'ith_f']].mean(axis=1, skipna=True)
-glathida_rgis_zeros = glathida_rgis.loc[glathida_rgis['THICKNESS'] == 0.0]
-#glathida_rgis = glathida_rgis[glathida_rgis['THICKNESS'] != 0.0]
-glathida_nan = glathida_rgis[glathida_rgis.isna().any(axis=1)]
-
-glathida_19 = glathida_rgis[glathida_rgis['RGI'].isin([19])]
-#fig, ax = plt.subplots()
-#s1 = ax.scatter(x=glathida_19['POINT_LON'], y=glathida_19['POINT_LAT'], s=2, c=glathida_19['THICKNESS'])
-#s2 = ax.scatter(x=glathida_nan['POINT_LON'], y=glathida_nan['POINT_LAT'], s=2, c='r')#c=np.sqrt(glathida_nan['vx']**2+glathida_nan['vy']**2))
-#cbar = plt.colorbar(s1)
-#plt.show()
-
 # Regional statistics for Millan and Farinotti
-calc_regional_stats_millan_and_farinotti = True
+calc_regional_stats_millan_and_farinotti = False
 if calc_regional_stats_millan_and_farinotti:
     for rgi in sorted(glathida_rgis['RGI'].unique()):
         df = glathida_rgis.loc[glathida_rgis['RGI']==rgi]
@@ -153,27 +138,12 @@ if calc_regional_stats_millan_and_farinotti:
         print(f"{rgi}\t{rmse_millan:.2f}\t{rmse_farinotti:.2f}")
 
 
-# Filter out some portion of it
-#glathida_rgis = glathida_rgis.loc[glathida_rgis['THICKNESS']>=CFG.min_thick_value_train]
-#glathida_rgis = glathida_rgis.loc[(glathida_rgis['RGI'] == 3) | (glathida_rgis['RGI'] == 7)]
-#glathida_rgis = glathida_rgis[~glathida_rgis['RGI'].isin([19])]
-#glathida_rgis = glathida_rgis[glathida_rgis['RGI'].isin([19])]
-
 # Add some features
 glathida_rgis['lats'] = glathida_rgis['POINT_LAT']
 glathida_rgis['elevation_from_zmin'] = glathida_rgis['elevation'] - glathida_rgis['Zmin']
 glathida_rgis['deltaZ'] = glathida_rgis['Zmax'] - glathida_rgis['Zmin']
-#glathida_rgis['hbahrm'] = 0.03*(glathida_rgis['Area']**0.375)*1000 # Bahr's approximation: h in meters
-glathida_rgis['hbahrm2'] = np.sqrt(glathida_rgis['Area'])*glathida_rgis['dist_from_border_km_geom']/glathida_rgis['Lmax']
-A = 24 * np.power(10, -25.0) #s−1 Pa−3
-rho, g, n = 917., 9.81, 3
-#glathida_rgis['sia1'] = ((glathida_rgis['v100']*(1-0.1)*(n+1))/(2*A*(rho*g*glathida_rgis['slope100'])**3))**(1./(n+1))
-#glathida_rgis['sia2'] = ((glathida_rgis['v100']*(1-0.2)*(n+1))/(2*A*(rho*g*glathida_rgis['slope100'])**3))**(1./(n+1))
-#glathida_rgis['sia3'] = ((glathida_rgis['v100']*(1-0.5)*(n+1))/(2*A*(rho*g*glathida_rgis['slope100'])**3))**(1./(n+1))
-glathida_rgis['sia'] = glathida_rgis['v100']/(glathida_rgis['slope100']**3)
 
-# Remove nans (this is an overkill - i want ideally to remove nans only in the training features)
-#glathida_rgis = glathida_rgis.dropna()
+# Remove nans (if any)
 glathida_rgis = glathida_rgis.dropna(subset=CFG.features + ['THICKNESS'])
 
 print(f"Overall dataset: {len(glathida_rgis)} rows, {glathida_rgis['RGI'].value_counts()} regions and {glathida_rgis['RGIId'].nunique()} glaciers.")
@@ -199,7 +169,6 @@ if CFG.run_umap_tsne:
     cbar2.set_label('THICKNESS (m)', labelpad=15, rotation=270)
     plt.show()
     input('wait')
-
 
 def compute_scores(y, predictions, verbose=False):
     '''returns mae, rmse, mu, med, std, slope, intercept'''
@@ -227,7 +196,7 @@ def compute_scores(y, predictions, verbose=False):
         for key in res: print(f"{key}: {res[key]:.2f}", end=", ")
     return tuple(res.values())
 
-def objective(trial):
+def objective_xgb(trial):
 
     # Suggest values of the hyperparameters using a trial object.
     params = {
@@ -236,14 +205,16 @@ def objective(trial):
         "objective": 'reg:squarederror',
         'tree_method': "gpu_hist",
         "n_estimators": 1000, #trial.suggest_int("n_estimators", 1, 2000),
+        "early_stopping_rounds": 50, #100
         "verbosity": 0,
-        'lambda': trial.suggest_loguniform('lambda', 1e-3, 10.0),
-        #'alpha': trial.suggest_loguniform('alpha', 7.0, 17.0), # some say either lambda or alpha is enough
+        'lambda': trial.suggest_float('lambda', 1e-3, 100.0, log=True),
+        'alpha': trial.suggest_float('alpha', 1e-3, 100.0, log=True),
         "learning_rate": trial.suggest_float("learning_rate", 1e-3, 0.1, log=True),
+        "gamma": trial.suggest_float("gamma", 1e-3, 100, log=True),
         "max_depth": trial.suggest_int("max_depth", 1, 20),
-        "subsample": trial.suggest_float("subsample", 0.3, 1.0), # [0.7, 1] are usually the best
-        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.3, 1.0), # [0.5,1] usually seem to work best
-        "min_child_weight": trial.suggest_int("min_child_weight", 1, 200), # some say [1, 200]
+        "subsample": trial.suggest_float("subsample", 0.3, 1.0),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.3, 1.0),
+        "min_child_weight": trial.suggest_int("min_child_weight", 1, 200),
     }
 
     train, test = create_train_test(glathida_rgis, rgi=None, full_shuffle=True, frac=0.2, seed=None) #42
@@ -251,16 +222,44 @@ def objective(trial):
     X_train, X_test = train[CFG.features], test[CFG.features]
 
     model = xgb.XGBRegressor(**params)
-    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], early_stopping_rounds=100, verbose=False)
+    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=False)
     y_preds = model.predict(X_test)
 
     rmse = mean_squared_error(y_test, y_preds, squared=False)
     return rmse
 
+def objective_cat(trial):
+    params_cat = {
+        'iterations': 10000,
+        'depth': trial.suggest_int('depth', 4, 15),
+        'learning_rate': trial.suggest_float('learning_rate', 1e-3, 0.2, log=True),
+        #'subsample': trial.suggest_float('subsample', 0.05, 1.0),
+        #'colsample_bylevel': trial.suggest_float('colsample_bylevel', 0.05, 1.0),
+        'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 1, 100),
+        'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 100),
+        'task_type': 'GPU',
+        'devices': '0',
+    }
+
+    train, test = create_train_test(glathida_rgis, rgi=None, full_shuffle=True, frac=0.2, seed=None)  # 42
+    y_train, y_test = train[CFG.target], test[CFG.target]
+    X_train, X_test = train[CFG.features], test[CFG.features]
+
+    cat = cb.CatBoostRegressor(**params_cat, silent=True)
+    cat.fit(X_train, y_train, eval_set=(X_test, y_test), early_stopping_rounds=50)
+    y_preds = cat.predict(X_test)
+
+    rmse = mean_squared_error(y_test, y_preds, squared=False)
+    return rmse
+
+optimize_xgb, optimize_cat = False, True
 optune_optimize = False
 if optune_optimize:
     study = optuna.create_study(direction='minimize')
-    study.optimize(objective, n_trials=200)
+    if optimize_xgb:
+        study.optimize(objective_xgb, n_trials=200, n_jobs=-1)
+    elif optimize_cat:
+        study.optimize(objective_cat, n_trials=100)
 
     print('Best hyperparameters:', study.best_params)
     print('Best RMSE:', study.best_value)
@@ -271,13 +270,14 @@ stds_ML, meds_ML, slopes_ML, rmses_ML = [], [], [], []
 stds_Mil, meds_Mil, slopes_Mil, rmses_Mil = [], [], [], []
 stds_Far, meds_Far, slopes_Far, rmses_Far = [], [], [], []
 
-best_model = None
+best_model_xgb = None
+best_model_cat = None
 best_rmse = 9999
 
 for i in range(CFG.n_rounds):
 
     # Train, val, and test
-    train, test = create_train_test(glathida_rgis, rgi=None, full_shuffle=True, frac=.2, seed=None)
+    train, test = create_train_test(glathida_rgis, rgi=None, full_shuffle=True, frac=0.2, seed=None)
 
     create_val = False
     if create_val:
@@ -318,26 +318,29 @@ for i in range(CFG.n_rounds):
     # custom_obj = xgb_custom_obj(elevation_train)
 
     # Train the model
-    model = xgb.train(
+    model_xgb = xgb.train(
         CFG.xgb_params,
         dtrain,
         #obj=custom_obj, # If I want to use the custom loss:
-        num_boost_round=537,
+        num_boost_round=1000, #537 #1000
         evals=[(dtest, 'eval')],
         early_stopping_rounds=50,
         verbose_eval=False
     )
-    y_preds = model.predict(dtest)
+    y_preds_xgb = model_xgb.predict(dtest)
 
-    '''
-    ### sklearn-api: initialize the model
-    model = xgb.XGBRegressor(**CFG.xgb_params)
-    #model = CFG.model
+    model_cat = cb.CatBoostRegressor(
+        **CFG.cat_params,
+        loss_function='RMSE',
+        task_type="GPU",
+        verbose=100
+    )
 
-    #model.fit(X_train, y_train)
-    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], early_stopping_rounds=100, verbose=False)
-    y_preds = model.predict(X_test)
-    '''
+    model_cat.fit(X_train, y_train, eval_set=(X_test, y_test), early_stopping_rounds=50)
+    y_preds_cat = model_cat.predict(X_test)
+
+    # ensemble
+    y_preds = 0.5 * (y_preds_xgb + y_preds_cat)
 
     # Shap Analysis
     if CFG.run_shap:
@@ -403,11 +406,10 @@ for i in range(CFG.n_rounds):
     mae_mil, rmse_mil, mu_mil, med_mil, std_mil, mfit_mil, qfit_mil = compute_scores(y_test, y_test_m, verbose=False)
     mae_far, rmse_far, mu_far, med_far, std_far, mfit_far, qfit_far = compute_scores(y_test, y_test_f, verbose=False)
 
-    #*** Note: here it is very important since this is the policy to decide which model will be selected for deploy
-    #rmse = model_metrics_ML['rmse']
     if rmse_ML < best_rmse:
         best_rmse = rmse_ML
-        best_model = model
+        best_model_xgb = model_xgb
+        best_model_cat = model_cat
 
     print(f'{i} Benchmarks ML, Millan and Farinotti: {rmse_ML:.2f} {rmse_mil:.2f} {rmse_far:.2f}')
 
@@ -434,11 +436,14 @@ print(f"Rmse {100*(np.nanmean(rmses_Far)-np.nanmean(rmses_ML))/np.nanmean(rmses_
 
 print(f"At the end of cv the best rmse is {best_rmse}")
 
-if args.save_model==1:
+if args.save_model:
     date_n_time = time.strftime("%Y%m%d", time.localtime())
-    fileout = f"{args.save_outdir}{args.save_outname}_{date_n_time}.json"
-    best_model.save_model(fileout)
-    print(f'saved: {fileout}')
+    fileout_xgb = f"{args.save_outdir}iceboost_xgb_{date_n_time}.json"
+    fileout_cat = f"{args.save_outdir}iceboost_cat_{date_n_time}.cbm"
+    best_model_xgb.save_model(fileout_xgb)
+    best_model_cat.save_model(fileout_cat, format="cbm")
+    print(f'saved models {fileout_xgb} and {fileout_cat}')
+
 
 # ************************************
 # plot
@@ -535,13 +540,14 @@ if plot_spatial_test_predictions:
 
     plt.show()
 
+
 # *********************************************
 # Model deploy
 # *********************************************
-glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-03.02467', rgi=7, area=30, seed=None)
-#'RGI60-13.37753', RGI60-13.43528 RGI60-13.54431
-#glacier_name_for_generation = 'RGI60-07.00228' #RGI60-07.00027 'RGI60-11.01450' RGI60-07.00552,
-#glacier_name_for_generation = 'RGI60-07.00832' very nice
+glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-03.01517', rgi=7, area=30, seed=None)
+# 'RGI60-13.37753', RGI60-13.43528 RGI60-13.54431
+# glacier_name_for_generation = 'RGI60-07.00228' #RGI60-07.00027 'RGI60-11.01450' RGI60-07.00552,
+# glacier_name_for_generation = 'RGI60-07.00832' very nice
 # RGI60-03.00832 la differenza tra i modelli è molto interessante
 # RGI60-03.01708
 #'RGI60-03.01632', 'RGI60-07.01482' ML simile agli altri 2 in termini di alte profondita
@@ -582,12 +588,6 @@ test_glacier = populate_glacier_with_metadata(glacier_name=glacier_name_for_gene
                                               n=CFG.n_points_regression, seed=42, verbose=True)
 test_glacier_rgi = glacier_name_for_generation[6:8]
 
-# Add features
-#test_glacier['sia'] = ((0.3*test_glacier['v50']*(3+1))/(2*A*(rho*g*test_glacier['slope50'])**3))**(1./4)
-test_glacier['sia'] = test_glacier['v100']/(test_glacier['slope100']**3)
-test_glacier['deltaZ'] = test_glacier['Zmax'] - test_glacier['Zmin']
-#test_glacier['hbahrm2'] = np.sqrt(test_glacier['Area'])*test_glacier['dist_from_border_km_geom']/test_glacier['Lmax']
-
 #fig, (ax1, ax2, ax3) = plt.subplots(1,3)
 #s = ax1.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=1, c=test_glacier['dist_from_border_km_geom'])
 #s2 = ax2.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=1, c=test_glacier['dist_from_ocean'])
@@ -597,7 +597,6 @@ test_glacier['deltaZ'] = test_glacier['Zmax'] - test_glacier['Zmin']
 #cbar3 = plt.colorbar(s3)
 #plt.show()
 
-
 X_test_glacier = test_glacier[CFG.features]
 y_test_glacier_m = test_glacier[CFG.millan]
 y_test_glacier_f = test_glacier[CFG.farinotti]
@@ -606,8 +605,10 @@ dtest = xgb.DMatrix(data=X_test_glacier)
 no_millan_data = np.isnan(y_test_glacier_m).all()
 no_farinotti_data = np.isnan(y_test_glacier_f).all()
 
-#y_preds_glacier = best_model.predict(X_test_glacier) # sklearn-api
-y_preds_glacier = best_model.predict(dtest) # Native API
+y_preds_glacier_xgb = best_model_xgb.predict(dtest)
+y_preds_glacier_cat = best_model_cat.predict(X_test_glacier)
+
+y_preds_glacier = 0.5 * (y_preds_glacier_xgb + y_preds_glacier_cat)
 
 # Set negative predictions to zero
 y_preds_glacier = np.where(y_preds_glacier < 0, 0, y_preds_glacier)
@@ -702,9 +703,7 @@ if plot_fancy_ML_prediction:
     hillshade = hillshade.rio.clip_box(minx=x0-dx/4, miny=y0-dy/4, maxx=x1+dx/4, maxy=y1+dy/4)
 
     im = hillshade.plot(ax=ax, cmap='grey', alpha=0.9, zorder=0, add_colorbar=False)
-    #im = ax.imshow(hillshade, cmap='grey', alpha=0.9, zorder=0)
-    #im = ax.imshow(hillshade, cmap='grey', vmin=np.nanmin(focus), vmax=np.nanmax(focus), alpha=0.15, zorder=0)
-    # y_preds_glacier
+
     s1 = ax.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=1, c=y_preds_glacier,
                      cmap='jet', label='ML', zorder=1, vmin=vmin,vmax=vmax)
     s_glathida = ax.scatter(x=glathida_rgis['POINT_LON'], y=glathida_rgis['POINT_LAT'], c=glathida_rgis['THICKNESS'],
