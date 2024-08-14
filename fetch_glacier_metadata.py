@@ -2,11 +2,14 @@ import os, sys, time
 from glob import glob
 import argparse
 import numpy as np
+import cupy as cp
+import cupyx.scipy.ndimage
 import pandas as pd
 import scipy
 from scipy.interpolate import griddata
 from astropy.convolution import Gaussian2DKernel, convolve, convolve_fft
-from sklearn.neighbors import KDTree
+import sklearn.neighbors
+import pykdtree.kdtree
 from sklearn.impute import KNNImputer, SimpleImputer
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
@@ -18,10 +21,12 @@ import geopandas as gpd
 import oggm
 from oggm import utils
 from shapely.geometry import Point, Polygon, LineString, MultiLineString
+from shapely.errors import GEOSException
 from pyproj import Proj, Transformer, Geod
 import utm
 from joblib import Parallel, delayed
 from functools import partial
+import networkx
 
 from create_rgi_mosaic_tanxedem import fetch_dem, create_glacier_tile_dem_mosaic
 from utils_metadata import haversine, from_lat_lon_to_utm_and_epsg, gaussian_filter_with_nans, lmax_imputer
@@ -42,8 +47,74 @@ The interpolation method="nearest" yields much less nans close to borders if com
 interpolation and therefore is preferred. 
 
 """
+def get_rgi_products(rgi):
+    utils.get_rgi_dir(version='62')  # setup oggm version
+    utils.get_rgi_intersects_dir(version='62')
 
-def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
+    if not isinstance(rgi, str): rgi = f"{rgi:02d}"
+
+    # get rgi region and intersect shp files
+    oggm_rgi_shp = utils.get_rgi_region_file(rgi, version='62')
+    oggm_rgi_intersects_shp = utils.get_rgi_intersects_region_file(rgi, version='62')
+
+    # get rgi dataset of glaciers and glaciers intersects
+    oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
+    oggm_rgi_intersects = gpd.read_file(oggm_rgi_intersects_shp, engine='pyogrio')
+
+    # Create graph of connectivity needed for distance calculations
+    rgi_graph = networkx.Graph()
+    edges = oggm_rgi_intersects[['RGIId_1', 'RGIId_2']].values
+    rgi_graph.add_edges_from(edges)
+
+    # mass balance rgi dataframe
+    mbdf = utils.get_geodetic_mb_dataframe()
+    mbdf = mbdf.loc[mbdf['period'] == '2000-01-01_2020-01-01']
+    mbdf_rgi = mbdf.loc[mbdf['reg'] == int(rgi)]
+
+    rgi_products = (oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi)
+
+    return rgi_products
+
+def get_coastline_dataframe(GSHHG_folder):
+    gdf16 = gpd.read_file(f'{GSHHG_folder}GSHHS_f_L1_L6.shp', engine='pyogrio')
+    return gdf16
+
+
+def find_cluster_with_graph(graph, start_node, max_depth=None):
+    if not graph.has_node(start_node):
+        return [start_node]
+    # Find all nodes in the connected component
+    #neighbors = networkx.node_connected_component(graph, start_node)
+    #return list(neighbors)
+    # Use a BFS traversal to get nodes up to the max_depth
+    nodes_at_depth = set()
+    nodes_to_visit = [(start_node, 0)]  # (node, current_depth)
+
+    while nodes_to_visit:
+        current_node, current_depth = nodes_to_visit.pop(0)
+
+        # If max_depth is not None and current_depth exceeds max_depth, stop processing this branch
+        if max_depth is not None and current_depth > max_depth:
+            continue
+
+        # Add the current node to the set of nodes to return
+        nodes_at_depth.add(current_node)
+
+        # Add neighbors to the list with incremented depth
+        neighbors = list(graph.neighbors(current_node))
+        for neighbor in neighbors:
+            if neighbor not in nodes_at_depth:
+                nodes_to_visit.append((neighbor, current_depth + 1))
+
+    return list(nodes_at_depth)
+
+
+def populate_glacier_with_metadata(glacier_name,
+                                   config = None,
+                                   rgi_products=None,
+                                   coastlines_dataframe = None,
+                                   seed=None,
+                                   verbose=True):
 
     class args:
         mosaic = "/media/maffe/nvme/Tandem-X-EDEM/"
@@ -60,36 +131,15 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     print(f"******* FETCHING FEATURES FOR GLACIER {glacier_name} *******") if verbose else None
     tin=time.time()
 
-    utils.get_rgi_dir(version='62')  # setup oggm version
-    utils.get_rgi_intersects_dir(version='62')
+    # unpack config
+    n_points_regression = config.n_points_regression
+    k_max_geoms = config.kdtree_dist_max_k_geometries
+    graph_max_layer_depth = config.graph_max_layer_depth
 
     rgi = int(glacier_name[6:8]) # get rgi from the glacier code
-    oggm_rgi_shp = utils.get_rgi_region_file(f"{rgi:02d}", version='62') # get rgi region shp
-    oggm_rgi_intersects_shp = utils.get_rgi_intersects_region_file(f"{rgi:02d}", version='62') # get rgi intersect shp file
 
-    # Note this takes a few seconds. Cannot do that for each glacier.
-    oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')             # get rgi dataset of glaciers.
-    oggm_rgi_intersects =  gpd.read_file(oggm_rgi_intersects_shp, engine='pyogrio') # get rgi dataset of glaciers intersects
-
-    def add_new_neighbors(neigbords, df):
-        """ I give a list of neighbors and I should return a new list with added neighbors"""
-        for id in neigbords:
-            neighbors_wrt_id = df[df['RGIId_1'] == id]['RGIId_2'].unique()
-            neigbords = np.append(neigbords, neighbors_wrt_id)
-        neigbords = np.unique(neigbords)
-        return neigbords
-
-    def find_cluster_RGIIds(id, df):
-        neighbors0 = np.array([id])
-        len0 = len(neighbors0)
-        neighbors1 = add_new_neighbors(neighbors0, df)
-        len1 = len(neighbors1)
-        while (len1 > len0):
-            len0 = len1
-            neighbors1 = add_new_neighbors(neighbors1, df)
-            len1 = len(neighbors1)
-        if (len(neighbors1)) ==1: return None
-        else: return neighbors1
+    # Get rgi products
+    oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
 
     try:
         # Get glacier dataset
@@ -104,16 +154,6 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
         print(f"Error. {glacier_name} not present in OGGM's RGI v62.")
         return None
 
-    # intersects of glacier (need only for plotting purposes)
-    gl_intersects = oggm.utils.get_rgi_intersects_entities([glacier_name], version='62')
-
-    # Calculate intersects of all glaciers in the cluster
-    list_cluster_RGIIds = find_cluster_RGIIds(glacier_name, oggm_rgi_intersects)
-    # print(f"List of glacier cluster: {list_cluster_RGIIds}")
-
-    if list_cluster_RGIIds is not None:
-        cluster_intersects = oggm.utils.get_rgi_intersects_entities(list_cluster_RGIIds, version='62') # (need only for plotting purposes)
-    else: cluster_intersects = None
     gl_geom = gl_df['geometry'].item() # glacier geometry Polygon
     gl_geom_ext = Polygon(gl_geom.exterior)  # glacier geometry Polygon
     gl_geom_nunataks_list = [Polygon(nunatak) for nunatak in gl_geom.interiors] # list of nunataks Polygons
@@ -130,19 +170,26 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     points = {'lons': [], 'lats': [], 'nunataks': []}
     if seed is not None: np.random.seed(seed)
 
-    while (len(points['lons']) < n):
-        batch_size = min(n, n - len(points['lons']))  # Adjust batch size as needed
+    while (len(points['lons']) < n_points_regression):
+        batch_size = min(n_points_regression, n_points_regression - len(points['lons']))  # Adjust batch size as needed
         r_lons = np.random.uniform(llx, urx, batch_size)
         r_lats = np.random.uniform(lly, ury, batch_size)
-        points_batch = list(map(Point, r_lons, r_lats))
-        points_batch_gdf = gpd.GeoDataFrame(geometry=points_batch, crs="EPSG:4326")
+        #points_batch = list(map(Point, r_lons, r_lats))
+        #points_batch_gdf = gpd.GeoDataFrame(geometry=points_batch, crs="EPSG:4326")
+        points_batch_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(r_lons, r_lats), crs="EPSG:4326")
 
+        # A bit faster
+        # 1) Select only those points generated inside the external polygon
+        #points_in_glacier_gdf = gpd.sjoin(points_batch_gdf, gl_geom_ext_gdf, how="inner", predicate="within").drop(columns=['index_right'])
+        # 2) Exclude points that are inside any internal polygons
+        #points_in_internal_polygons_gdf = gpd.sjoin(points_in_glacier_gdf, gl_geom_nunataks_gdf, how="left", predicate="within")
+        #points_not_in_nunataks_gdf = points_in_internal_polygons_gdf[points_in_internal_polygons_gdf.index_right.isna()]
+
+        # A bit slower
         # 1) First we select only those points generated inside the glacier
         points_yes_no_ext_gdf = gpd.sjoin(points_batch_gdf, gl_geom_ext_gdf, how="left", predicate="within")
         points_in_glacier_gdf = points_yes_no_ext_gdf[~points_yes_no_ext_gdf.index_right.isna()].drop(columns=['index_right'])
-
         indexes_of_points_inside = points_in_glacier_gdf.index
-
         # 2) Then we get rid of all those generated inside nunataks
         points_yes_no_nunataks_gdf = gpd.sjoin(points_batch_gdf.loc[indexes_of_points_inside], gl_geom_nunataks_gdf, how="left", predicate="within")
         points_not_in_nunataks_gdf = points_yes_no_nunataks_gdf[points_yes_no_nunataks_gdf.index_right.isna()].drop(columns=['index_right'])
@@ -164,7 +211,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
             points_in_nunataks_gdf.plot(ax=ax, color='red', alpha=0.5, markersize=1, zorder=2)
             plt.show()
 
-    print(f"We have generated {len(points['lats'])} points.") if verbose else None
+    print(f"We have generated {len(points['lats'])} pointsin {time.time()-tp0:.3f}") if verbose else None
     # Feature dataframe
     points_df = pd.DataFrame(columns=['lons', 'lats', 'nunataks'])
     # Fill lats, lons and nunataks
@@ -983,9 +1030,9 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
         # Fill the dataframe for occupancy
         tocc0 = time.time()
         for i, (file_vx, file_vy, file_ith) in enumerate(zip(files_vx, files_vy, files_ith)):
-            tile_vx = rioxarray.open_rasterio(file_vx, masked=False)
-            tile_vy = rioxarray.open_rasterio(file_vy, masked=False) # may relax this
-            tile_ith = rioxarray.open_rasterio(file_ith, masked=False)
+            tile_vx = rioxarray.open_rasterio(file_vx, cache=True, masked=False)
+            tile_vy = rioxarray.open_rasterio(file_vy, cache=True, masked=False) # may relax this
+            tile_ith = rioxarray.open_rasterio(file_ith, cache=True, masked=False)
 
             if not tile_vx.rio.bounds() == tile_vy.rio.bounds() == tile_ith.rio.bounds():
                 tile_ith = tile_ith.reindex_like(tile_vx, method="nearest", tolerance=50., fill_value=np.nan)
@@ -1289,7 +1336,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
                             maxy=nelat + (deltalat + eps),
                              rgi=rgi, path_tandemx=args.mosaic)
     t1_load_dem = time.time()
-    print(f"Time to load dem and create mosaic: {t1_load_dem-t0_load_dem}")
+    print(f"Time to load dem and create mosaic: {t1_load_dem-t0_load_dem}") if verbose else None
 
     focus = focus_mosaic_tiles.squeeze()
 
@@ -1297,10 +1344,10 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     # Reproject to utm (projection distortions along boundaries converted to nans)
     # Default resampling is nearest which leads to weird artifacts. Options are bilinear (long) and cubic (very long)
     t0_reproj_dem = time.time()
-    focus_utm = focus.rio.reproject(glacier_epsg, resampling=rasterio.enums.Resampling.bilinear, nodata=-9999)
-    focus_utm = focus_utm.where(focus_utm != -9999, np.nan)
+    focus_utm = focus.rio.reproject(glacier_epsg, resampling=rasterio.enums.Resampling.bilinear, nodata=np.nan)#nodata=-9999
+    #focus_utm = focus_utm.where(focus_utm != -9999, np.nan) #todo: is this even necessary ?
     t1_reproj_dem = time.time()
-    print(f"Time to reproject dem: {t1_reproj_dem - t0_reproj_dem}")
+    print(f"Time to reproject dem: {t1_reproj_dem - t0_reproj_dem}") if verbose else None
 
     # Calculate the resolution in meters of the utm focus (resolutions in x and y are the same!)
     res_utm_metres = focus_utm.rio.resolution()[0]
@@ -1361,68 +1408,148 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
 
     # I first smooth the elevation with 6 kernels and then calculating the slopes.
     # I fear I should first calculate the slope (1 field) and the smooth it using 6 kernels
-    t0_dem_smooth = time.time()
-    preserve_nans = True
-    focus_filter_50_utm = convolve_fft(focus_utm.values, kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-    focus_filter_75_utm = convolve_fft(focus_utm.values, kernel75, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-    focus_filter_100_utm = convolve_fft(focus_utm.values, kernel100, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-    focus_filter_125_utm = convolve_fft(focus_utm.values, kernel125, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-    focus_filter_150_utm = convolve_fft(focus_utm.values, kernel150, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-    focus_filter_300_utm = convolve_fft(focus_utm.values, kernel300, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-    focus_filter_450_utm = convolve_fft(focus_utm.values, kernel450, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-    focus_filter_af_utm = convolve_fft(focus_utm.values, kernelaf, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-    t1_dem_smooth = time.time()
-    print(f"Time to smooth dem: {t1_dem_smooth - t0_dem_smooth}")
+    run_dem_with_gpu = False
+    run_dem_with_cpu = not run_dem_with_gpu
+
+    if run_dem_with_gpu:
+        # some weird artifacts are introduced for small glaciers, see e.g. RGI60-13.33257, or RGI60-13.45291,
+        # compared to cpu with astropy. i suspect astropy works a little better in dealing with nans due to reprojections
+        # GPU
+        t0_dem_smooth_cp = time.time()
+        focus_utm_cp = cp.asarray(focus_utm.values)
+        focus_filter_50_utm_cp = cupyx.scipy.ndimage.gaussian_filter(focus_utm_cp, sigma=num_px_sigma_50, mode='mirror')#.get()
+        focus_filter_75_utm_cp = cupyx.scipy.ndimage.gaussian_filter(focus_utm_cp, sigma=num_px_sigma_75, mode='mirror')#.get()
+        focus_filter_100_utm_cp = cupyx.scipy.ndimage.gaussian_filter(focus_utm_cp, sigma=num_px_sigma_100, mode='mirror')#.get()
+        focus_filter_125_utm_cp = cupyx.scipy.ndimage.gaussian_filter(focus_utm_cp, sigma=num_px_sigma_125, mode='mirror')#.get()
+        focus_filter_150_utm_cp = cupyx.scipy.ndimage.gaussian_filter(focus_utm_cp, sigma=num_px_sigma_150, mode='mirror')#.get()
+        focus_filter_300_utm_cp = cupyx.scipy.ndimage.gaussian_filter(focus_utm_cp, sigma=num_px_sigma_300, mode='mirror')#.get()
+        focus_filter_450_utm_cp = cupyx.scipy.ndimage.gaussian_filter(focus_utm_cp, sigma=num_px_sigma_450, mode='mirror')#.get()
+        focus_filter_af_utm_cp = cupyx.scipy.ndimage.gaussian_filter(focus_utm_cp, sigma=num_px_sigma_af, mode='mirror')#.get()
+        t1_dem_smooth_cp = time.time()
+        print(f"Time to smooth dem with cupy: {t1_dem_smooth_cp - t0_dem_smooth_cp}") if verbose else None
+
+        # In case of big kernels we need to remove nan artifacts (on cpu we have astropy that does that)
+        t_nan0 = time.time()
+        mean_dem_elev = cp.nanmean(focus_utm_cp)
+        focus_filter_50_utm_cp = cp.nan_to_num(focus_filter_50_utm_cp, nan=mean_dem_elev)
+        focus_filter_75_utm_cp = cp.nan_to_num(focus_filter_75_utm_cp, nan=mean_dem_elev)
+        focus_filter_100_utm_cp = cp.nan_to_num(focus_filter_100_utm_cp, nan=mean_dem_elev)
+        focus_filter_125_utm_cp = cp.nan_to_num(focus_filter_125_utm_cp, nan=mean_dem_elev)
+        focus_filter_150_utm_cp = cp.nan_to_num(focus_filter_150_utm_cp, nan=mean_dem_elev)
+        focus_filter_300_utm_cp = cp.nan_to_num(focus_filter_300_utm_cp, nan=mean_dem_elev)
+        focus_filter_450_utm_cp = cp.nan_to_num(focus_filter_450_utm_cp, nan=mean_dem_elev)
+        focus_filter_af_utm_cp = cp.nan_to_num(focus_filter_af_utm_cp, nan=mean_dem_elev)
+        t_nan1 = time.time()
+        print(f'Time required to fill nans in cupy: {t_nan1 - t_nan0}') if verbose else None
+
+        # slopes with GPU
+        s50_lat, s50_lon = cp.gradient(focus_filter_50_utm_cp, -res_utm_metres, res_utm_metres)
+        s75_lat, s75_lon = cp.gradient(focus_filter_75_utm_cp, -res_utm_metres, res_utm_metres)
+        s100_lat, s100_lon = cp.gradient(focus_filter_100_utm_cp, -res_utm_metres, res_utm_metres)
+        s125_lat, s125_lon = cp.gradient(focus_filter_125_utm_cp, -res_utm_metres, res_utm_metres)
+        s150_lat, s150_lon = cp.gradient(focus_filter_150_utm_cp, -res_utm_metres, res_utm_metres)
+        s300_lat, s300_lon = cp.gradient(focus_filter_300_utm_cp, -res_utm_metres, res_utm_metres)
+        s450_lat, s450_lon = cp.gradient(focus_filter_450_utm_cp, -res_utm_metres, res_utm_metres)
+        saf_lat, saf_lon = cp.gradient(focus_filter_af_utm_cp, -res_utm_metres, res_utm_metres)
+
+        s50 = cp.sqrt(s50_lat ** 2 + s50_lon ** 2).get()
+        s75 = cp.sqrt(s75_lat ** 2 + s75_lon ** 2).get()
+        s100 = cp.sqrt(s100_lat ** 2 + s100_lon ** 2).get()
+        s125 = cp.sqrt(s125_lat ** 2 + s125_lon ** 2).get()
+        s150 = cp.sqrt(s150_lat ** 2 + s150_lon ** 2).get()
+        s300 = cp.sqrt(s300_lat ** 2 + s300_lon ** 2).get()
+        s450 = cp.sqrt(s450_lat ** 2 + s450_lon ** 2).get()
+        saf = cp.sqrt(saf_lat ** 2 + saf_lon ** 2).get()
+
+        # create slope xarrays
+        slope_50_xar = focus_utm.copy(data=s50)
+        slope_75_xar = focus_utm.copy(data=s75)
+        slope_100_xar = focus_utm.copy(data=s100)
+        slope_125_xar = focus_utm.copy(data=s125)
+        slope_150_xar = focus_utm.copy(data=s150)
+        slope_300_xar = focus_utm.copy(data=s300)
+        slope_450_xar = focus_utm.copy(data=s450)
+        slope_af_xar = focus_utm.copy(data=saf)
+
+        # These are needed for the curvature
+        focus_filter_xarray_50_utm = focus_utm.copy(data=focus_filter_50_utm_cp.get())
+        focus_filter_xarray_300_utm = focus_utm.copy(data=focus_filter_300_utm_cp.get())
+        focus_filter_xarray_af_utm = focus_utm.copy(data=focus_filter_af_utm_cp.get())
 
 
-    # create xarray object of filtered dem
-    focus_filter_xarray_50_utm = focus_utm.copy(data=focus_filter_50_utm)
-    focus_filter_xarray_75_utm = focus_utm.copy(data=focus_filter_75_utm)
-    focus_filter_xarray_100_utm = focus_utm.copy(data=focus_filter_100_utm)
-    focus_filter_xarray_125_utm = focus_utm.copy(data=focus_filter_125_utm)
-    focus_filter_xarray_150_utm = focus_utm.copy(data=focus_filter_150_utm)
-    focus_filter_xarray_300_utm = focus_utm.copy(data=focus_filter_300_utm)
-    focus_filter_xarray_450_utm = focus_utm.copy(data=focus_filter_450_utm)
-    focus_filter_xarray_af_utm = focus_utm.copy(data=focus_filter_af_utm)
+    if run_dem_with_cpu:
+        # CPU
+        t0_dem_smooth = time.time()
+        preserve_nans = True
+        focus_filter_50_utm = convolve_fft(focus_utm.values, kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        focus_filter_75_utm = convolve_fft(focus_utm.values, kernel75, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        focus_filter_100_utm = convolve_fft(focus_utm.values, kernel100, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        focus_filter_125_utm = convolve_fft(focus_utm.values, kernel125, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        focus_filter_150_utm = convolve_fft(focus_utm.values, kernel150, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        focus_filter_300_utm = convolve_fft(focus_utm.values, kernel300, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        focus_filter_450_utm = convolve_fft(focus_utm.values, kernel450, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        focus_filter_af_utm = convolve_fft(focus_utm.values, kernelaf, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        t1_dem_smooth = time.time()
+        print(f"Time to smooth dem: {t1_dem_smooth - t0_dem_smooth}") if verbose else None
 
-    # create xarray slopes
-    dz_dlat_xar, dz_dlon_xar = focus_utm.differentiate(coord='y'), focus_utm.differentiate(coord='x')
-    dz_dlat_filter_xar_50, dz_dlon_filter_xar_50 = focus_filter_xarray_50_utm.differentiate(coord='y'), focus_filter_xarray_50_utm.differentiate(coord='x')
-    dz_dlat_filter_xar_75, dz_dlon_filter_xar_75 = focus_filter_xarray_75_utm.differentiate(coord='y'), focus_filter_xarray_75_utm.differentiate(coord='x')
-    dz_dlat_filter_xar_100, dz_dlon_filter_xar_100 = focus_filter_xarray_100_utm.differentiate(coord='y'), focus_filter_xarray_100_utm.differentiate(coord='x')
-    dz_dlat_filter_xar_125, dz_dlon_filter_xar_125 = focus_filter_xarray_125_utm.differentiate(coord='y'), focus_filter_xarray_125_utm.differentiate(coord='x')
-    dz_dlat_filter_xar_150, dz_dlon_filter_xar_150 = focus_filter_xarray_150_utm.differentiate(coord='y'), focus_filter_xarray_150_utm.differentiate(coord='x')
-    dz_dlat_filter_xar_300, dz_dlon_filter_xar_300  = focus_filter_xarray_300_utm.differentiate(coord='y'), focus_filter_xarray_300_utm.differentiate(coord='x')
-    dz_dlat_filter_xar_450, dz_dlon_filter_xar_450  = focus_filter_xarray_450_utm.differentiate(coord='y'), focus_filter_xarray_450_utm.differentiate(coord='x')
-    dz_dlat_filter_xar_af, dz_dlon_filter_xar_af = focus_filter_xarray_af_utm.differentiate(coord='y'), focus_filter_xarray_af_utm.differentiate(coord='x')
+        # create xarray object of filtered dem
+        focus_filter_xarray_50_utm = focus_utm.copy(data=focus_filter_50_utm)
+        focus_filter_xarray_75_utm = focus_utm.copy(data=focus_filter_75_utm)
+        focus_filter_xarray_100_utm = focus_utm.copy(data=focus_filter_100_utm)
+        focus_filter_xarray_125_utm = focus_utm.copy(data=focus_filter_125_utm)
+        focus_filter_xarray_150_utm = focus_utm.copy(data=focus_filter_150_utm)
+        focus_filter_xarray_300_utm = focus_utm.copy(data=focus_filter_300_utm)
+        focus_filter_xarray_450_utm = focus_utm.copy(data=focus_filter_450_utm)
+        focus_filter_xarray_af_utm = focus_utm.copy(data=focus_filter_af_utm)
 
+        # create xarray slopes (differentiating an xarray is much slower than using numpy)
+        #dz_dlat_xar, dz_dlon_xar = focus_utm.differentiate(coord='y'), focus_utm.differentiate(coord='x')
+        #dz_dlat_filter_xar_50, dz_dlon_filter_xar_50 = focus_filter_xarray_50_utm.differentiate(coord='y'), focus_filter_xarray_50_utm.differentiate(coord='x')
+        #dz_dlat_filter_xar_75, dz_dlon_filter_xar_75 = focus_filter_xarray_75_utm.differentiate(coord='y'), focus_filter_xarray_75_utm.differentiate(coord='x')
+        #dz_dlat_filter_xar_100, dz_dlon_filter_xar_100 = focus_filter_xarray_100_utm.differentiate(coord='y'), focus_filter_xarray_100_utm.differentiate(coord='x')
+        #dz_dlat_filter_xar_125, dz_dlon_filter_xar_125 = focus_filter_xarray_125_utm.differentiate(coord='y'), focus_filter_xarray_125_utm.differentiate(coord='x')
+        #dz_dlat_filter_xar_150, dz_dlon_filter_xar_150 = focus_filter_xarray_150_utm.differentiate(coord='y'), focus_filter_xarray_150_utm.differentiate(coord='x')
+        #dz_dlat_filter_xar_300, dz_dlon_filter_xar_300  = focus_filter_xarray_300_utm.differentiate(coord='y'), focus_filter_xarray_300_utm.differentiate(coord='x')
+        #dz_dlat_filter_xar_450, dz_dlon_filter_xar_450  = focus_filter_xarray_450_utm.differentiate(coord='y'), focus_filter_xarray_450_utm.differentiate(coord='x')
+        #dz_dlat_filter_xar_af, dz_dlon_filter_xar_af = focus_filter_xarray_af_utm.differentiate(coord='y'), focus_filter_xarray_af_utm.differentiate(coord='x')
 
-    slope_50_xar = focus_utm.copy(data=(dz_dlat_filter_xar_50 ** 2 + dz_dlon_filter_xar_50 ** 2) ** 0.5)
-    slope_75_xar = focus_utm.copy(data=(dz_dlat_filter_xar_75 ** 2 + dz_dlon_filter_xar_75 ** 2) ** 0.5)
-    slope_100_xar = focus_utm.copy(data=(dz_dlat_filter_xar_100 ** 2 + dz_dlon_filter_xar_100 ** 2) ** 0.5)
-    slope_125_xar = focus_utm.copy(data=(dz_dlat_filter_xar_125 ** 2 + dz_dlon_filter_xar_125 ** 2) ** 0.5)
-    slope_150_xar = focus_utm.copy(data=(dz_dlat_filter_xar_150 ** 2 + dz_dlon_filter_xar_150 ** 2) ** 0.5)
-    slope_300_xar = focus_utm.copy(data=(dz_dlat_filter_xar_300 ** 2 + dz_dlon_filter_xar_300 ** 2) ** 0.5)
-    slope_450_xar = focus_utm.copy(data=(dz_dlat_filter_xar_450 ** 2 + dz_dlon_filter_xar_450 ** 2) ** 0.5)
-    slope_af_xar = focus_utm.copy(data=(dz_dlat_filter_xar_af ** 2 + dz_dlon_filter_xar_af ** 2) ** 0.5)
-    #slope_50_xar = slope.copy(data=slope_50)
-    #slope_75_xar = slope.copy(data=slope_75)
-    #slope_100_xar = slope.copy(data=slope_100)
-    #slope_125_xar = slope.copy(data=slope_125)
-    #slope_150_xar = slope.copy(data=slope_150)
-    #slope_300_xar = slope.copy(data=slope_300)
-    #slope_450_xar = slope.copy(data=slope_450)
-    #slope_af_xar = slope.copy(data=slope_af)
+        # create slope xarrays
+        #slope_50_xar = focus_utm.copy(data=(dz_dlat_filter_xar_50 ** 2 + dz_dlon_filter_xar_50 ** 2) ** 0.5)
+        #slope_75_xar = focus_utm.copy(data=(dz_dlat_filter_xar_75 ** 2 + dz_dlon_filter_xar_75 ** 2) ** 0.5)
+        #slope_100_xar = focus_utm.copy(data=(dz_dlat_filter_xar_100 ** 2 + dz_dlon_filter_xar_100 ** 2) ** 0.5)
+        #slope_125_xar = focus_utm.copy(data=(dz_dlat_filter_xar_125 ** 2 + dz_dlon_filter_xar_125 ** 2) ** 0.5)
+        #slope_150_xar = focus_utm.copy(data=(dz_dlat_filter_xar_150 ** 2 + dz_dlon_filter_xar_150 ** 2) ** 0.5)
+        #slope_300_xar = focus_utm.copy(data=(dz_dlat_filter_xar_300 ** 2 + dz_dlon_filter_xar_300 ** 2) ** 0.5)
+        #slope_450_xar = focus_utm.copy(data=(dz_dlat_filter_xar_450 ** 2 + dz_dlon_filter_xar_450 ** 2) ** 0.5)
+        #slope_af_xar = focus_utm.copy(data=(dz_dlat_filter_xar_af ** 2 + dz_dlon_filter_xar_af ** 2) ** 0.5)
 
+        # using numpy is much faster than xarray to differentiate
+        dz_dlat_np_50, dz_dlon_np_50 = np.gradient(focus_filter_50_utm, -res_utm_metres, res_utm_metres)
+        dz_dlat_np_75, dz_dlon_np_75 = np.gradient(focus_filter_75_utm, -res_utm_metres, res_utm_metres)
+        dz_dlat_np_100, dz_dlon_np_100 = np.gradient(focus_filter_100_utm, -res_utm_metres, res_utm_metres)
+        dz_dlat_np_125, dz_dlon_np_125 = np.gradient(focus_filter_125_utm, -res_utm_metres, res_utm_metres)
+        dz_dlat_np_150, dz_dlon_np_150 = np.gradient(focus_filter_150_utm, -res_utm_metres, res_utm_metres)
+        dz_dlat_np_300, dz_dlon_np_300 = np.gradient(focus_filter_300_utm, -res_utm_metres, res_utm_metres)
+        dz_dlat_np_450, dz_dlon_np_450 = np.gradient(focus_filter_450_utm, -res_utm_metres, res_utm_metres)
+        dz_dlat_np_af, dz_dlon_np_af = np.gradient(focus_filter_af_utm, -res_utm_metres, res_utm_metres)
 
-    #slat300, slon300 = focus_filter_xarray_300_utm.differentiate(coord='y'), focus_utm.differentiate(coord='x')
-    #slope_300_xar_after_dem_conv = slope_300_xar.copy(deep=True, data=(slat300 ** 2 + slon300 ** 2) ** 0.5)
+        slope_50_xar = focus_utm.copy(data=(dz_dlat_np_50 ** 2 + dz_dlon_np_50 ** 2) ** 0.5)
+        slope_75_xar = focus_utm.copy(data=(dz_dlat_np_75 ** 2 + dz_dlon_np_75 ** 2) ** 0.5)
+        slope_100_xar = focus_utm.copy(data=(dz_dlat_np_100 ** 2 + dz_dlon_np_100 ** 2) ** 0.5)
+        slope_125_xar = focus_utm.copy(data=(dz_dlat_np_125 ** 2 + dz_dlon_np_125 ** 2) ** 0.5)
+        slope_150_xar = focus_utm.copy(data=(dz_dlat_np_150 ** 2 + dz_dlon_np_150 ** 2) ** 0.5)
+        slope_300_xar = focus_utm.copy(data=(dz_dlat_np_300 ** 2 + dz_dlon_np_300 ** 2) ** 0.5)
+        slope_450_xar = focus_utm.copy(data=(dz_dlat_np_450 ** 2 + dz_dlon_np_450 ** 2) ** 0.5)
+        slope_af_xar = focus_utm.copy(data=(dz_dlat_np_af ** 2 + dz_dlon_np_af ** 2) ** 0.5)
 
-    #fig, (ax1, ax2, ax3) = plt.subplots(1,3)
-    #slope_300_xar.plot(ax=ax1)
-    #focus_filter_xarray_300_utm.plot(ax=ax2, cmap='terrain')
-    #slope_300_xar_after_dem_conv.plot(ax=ax3)
-    #plt.show()
+        #slat300, slon300 = focus_filter_xarray_300_utm.differentiate(coord='y'), focus_utm.differentiate(coord='x')
+        #slope_300_xar_after_dem_conv = slope_300_xar.copy(deep=True, data=(slat300 ** 2 + slon300 ** 2) ** 0.5)
+
+        #fig, (ax1, ax2, ax3) = plt.subplots(1,3)
+        #slope_300_xar.plot(ax=ax1)
+        #focus_filter_xarray_300_utm.plot(ax=ax2, cmap='terrain')
+        #slope_300_xar_after_dem_conv.plot(ax=ax3)
+        #plt.show()
 
     # Calculate curvature and aspect using xrspatial
     curv_50 = xrspatial.curvature(focus_filter_xarray_50_utm)
@@ -1432,7 +1559,11 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     #aspect_300 = xrspatial.aspect(focus_filter_xarray_300_utm)
     #aspect_af = xrspatial.aspect(focus_filter_xarray_af_utm)
 
-    # interpolate slope and dem
+    #slope_450_xar.plot()
+    #plt.show()
+
+    # interpolate slope and dem (this has to be done on cpu as xarray-cupy does not support interpolation yet)
+    t_interp0 = time.time()
     elevation_data = focus_utm.interp(y=northings_xar, x=eastings_xar, method='linear').data
     slope_50_data = slope_50_xar.interp(y=northings_xar, x=eastings_xar, method='linear').data
     slope_75_data = slope_75_xar.interp(y=northings_xar, x=eastings_xar, method='linear').data
@@ -1442,6 +1573,8 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     slope_300_data = slope_300_xar.interp(y=northings_xar, x=eastings_xar, method='linear').data
     slope_450_data = slope_450_xar.interp(y=northings_xar, x=eastings_xar, method='linear').data
     slope_af_data = slope_af_xar.interp(y=northings_xar, x=eastings_xar, method='linear').data
+    t_interp1 = time.time()
+    print(f"Time to interpolate DEM: {t_interp1 - t_interp0} s") if verbose else None
     #slope_lat_data = dz_dlat_xar.interp(y=northings_xar, x=eastings_xar, method='linear').data
     #slope_lon_data = dz_dlon_xar.interp(y=northings_xar, x=eastings_xar, method='linear').data
     #slope_lat_data_filter_50 = dz_dlat_filter_xar_50.interp(y=northings_xar, x=eastings_xar, method='linear').data
@@ -1468,9 +1601,6 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     #aspect_data_af = aspect_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
 
     # Hugonnet mass balance
-    mbdf = utils.get_geodetic_mb_dataframe() # note that this takes 1.3s. I should avoid opening this for each glacier
-    mbdf = mbdf.loc[mbdf['period']=='2000-01-01_2020-01-01']
-    mbdf_rgi = mbdf.loc[mbdf['reg'] == rgi]
     try:
         glacier_dmdtda = mbdf_rgi.at[glacier_name, 'dmdtda']
     except: # impute the mean
@@ -1479,7 +1609,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
 
 
     # check if any nan in the interpolate data
-    contains_nan = any(np.isnan(arr).any() for arr in [slope_50_data, slope_75_data, slope_100_data,
+    contains_nan = any(np.isnan(arr).any() for arr in [elevation_data, slope_50_data, slope_75_data, slope_100_data,
                                                        slope_125_data, slope_150_data, slope_300_data,
                                                        slope_450_data, slope_af_data,
                                                        curv_data_50, curv_data_300, curv_data_af,])
@@ -1617,19 +1747,19 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
 
         racmo = rioxarray.open_rasterio(f'{path_RACMO_folder}{racmo_file}')
 
-        eastings, northings = (Transformer.from_crs("EPSG:4326", racmo.rio.crs)
+        eastings_racmo, northings_racmo = (Transformer.from_crs("EPSG:4326", racmo.rio.crs)
                                .transform(points_df['lats'], points_df['lons']))
 
         # Convert coordinates to racmo projection EPSG:3413 (racmo Greenland) or EPSG:3031 (racmo Antarctica)
-        eastings_ar = xarray.DataArray(eastings)
-        northings_ar = xarray.DataArray(northings)
+        eastings_racmo_ar = xarray.DataArray(eastings_racmo)
+        northings_racmo_ar = xarray.DataArray(northings_racmo)
 
         # Interpolate racmo onto the points
-        smb_data = racmo.interp(y=northings_ar, x=eastings_ar, method='linear').data.squeeze()
+        smb_data = racmo.interp(y=northings_racmo_ar, x=eastings_racmo_ar, method='linear').data.squeeze()
 
         # If Racmo does not cover this glacier I use Hugonnet-elevation relation
         if np.all(np.isnan(smb_data)):
-            print("Using Hugonnet-elevation relation")
+            print("Using Hugonnet-elevation relation") if verbose else None
             m_hugo = smb_elev_functs_hugo(rgi=rgi).loc[rgi, 'm']
             q_hugo = smb_elev_functs_hugo(rgi=rgi).loc[rgi, 'q']
             smb_data_hugo = m_hugo * elevation_data + q_hugo  # m w.e./yr
@@ -1642,9 +1772,9 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
             vmin, vmax = racmo.min(), racmo.max()
             fig, (ax1, ax2) = plt.subplots(1, 2)
             racmo.plot(ax=ax1, cmap='hsv', vmin=vmin, vmax=vmax)
-            ax1.scatter(x=eastings, y=northings, c='k', s=20)
+            ax1.scatter(x=eastings_racmo_ar, y=northings_racmo_ar, c='k', s=20)
             racmo.plot(ax=ax2, cmap='hsv', vmin=vmin, vmax=vmax)
-            ax2.scatter(x=eastings, y=northings, c=smb_data, cmap='hsv', vmin=vmin, vmax=vmax, s=20)
+            ax2.scatter(x=eastings_racmo_ar, y=northings_racmo_ar, c=smb_data, cmap='hsv', vmin=vmin, vmax=vmax, s=20)
             plt.show()
 
     else:
@@ -1671,7 +1801,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
             cbar = plt.colorbar(s)
             plt.show()
 
-    print(f'Mean smb: {np.mean(smb_data)} kg/m2yr')
+    print(f'Mean smb: {np.mean(smb_data)} kg/m2yr') if verbose else None
     points_df['smb'] = smb_data
 
     tsmb1 = time.time()
@@ -1743,50 +1873,68 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     print(f"Calculating the distances using glacier geometries... ") if verbose else None
     tdist0 = time.time()
 
+    def add_new_neighbors(neighbors, df):
+        """ I give a list of neighbors and I should return a new list with added neighbors"""
+        for id in neighbors:
+            #neighbors_wrt_id = df[df['RGIId_1'] == id]['RGIId_2'].unique() # old, less precise
+            # new version. We don't care whether the glacier is in 1 or 2. This is accurate as method with graph
+            neighbors_wrt_1 = df[df['RGIId_1'] == id]['RGIId_2'].unique()
+            neighbors_wrt_2 = df[df['RGIId_2'] == id]['RGIId_1'].unique()
+            neighbors_wrt_id = np.concatenate((neighbors_wrt_1, neighbors_wrt_2))
+            neighbors = np.append(neighbors, neighbors_wrt_id)
+        neighbors = np.unique(neighbors)
+        return neighbors
+
+    def find_cluster_RGIIds(id, df):
+        neighbors0 = np.array([id])
+        len0 = len(neighbors0)
+        neighbors1 = add_new_neighbors(neighbors0, df)
+        len1 = len(neighbors1)
+        while len1 > len0:
+            len0 = len1
+            neighbors1 = add_new_neighbors(neighbors1, df)
+            len1 = len(neighbors1)
+        return neighbors1
+
+    # Calculate intersects of all glaciers in the cluster
+    # list_cluster_RGIIds = find_cluster_RGIIds(glacier_name, oggm_rgi_intersects)# (SLOW NESTED LOOP METHOD)
+    list_cluster_RGIIds = find_cluster_with_graph(rgi_graph, glacier_name, max_depth=graph_max_layer_depth)
+    no_glaciers_in_cluster = len(list_cluster_RGIIds)
+
+    print(f"Cluster: {no_glaciers_in_cluster} glaciers created in: {time.time()-tdist0:.3f}")
+
     # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks) and convert to UTM
-    if list_cluster_RGIIds is None: # Case 1: isolated glacier
-        print(f"Isolated glacier") if verbose else None
-        exterior_ring = gl_geom.exterior  # shapely.geometry.polygon.LinearRing
-        interior_rings = gl_geom.interiors  # shapely.geometry.polygon.InteriorRingSequence of polygon.LinearRing
-        geoseries_geometries_4326 = gpd.GeoSeries([exterior_ring] + list(interior_rings), crs="EPSG:4326")
-        geoseries_geometries_epsg = geoseries_geometries_4326.to_crs(epsg=glacier_epsg)
+    tgeoms0 = time.time()
+    cluster_geometry_list = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'].isin(list_cluster_RGIIds), 'geometry'].tolist()
 
-    elif list_cluster_RGIIds is not None: # Case 2: cluster of glaciers with ice divides
-        print(f"Cluster of glaciers with ice divides.") if verbose else None
-        cluster_geometry_list = []
-        for gl_neighbor_id in list_cluster_RGIIds:
-            gl_neighbor_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'] == gl_neighbor_id]
-            gl_neighbor_geom = gl_neighbor_df['geometry'].item()
-            cluster_geometry_list.append(gl_neighbor_geom)
+    # Combine into a series of all glaciers in the cluster
+    cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
 
-        # Combine into a series of all glaciers in the cluster
-        cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
+    # Now remove all ice divides
+    # Note: .union_all(method='coverage') is faster than 'unary' but may lead to incorrect results if polygons overlap
+    try:
+        cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='coverage'), crs="EPSG:4326")
+    except GEOSException as e:
+        print(f"Coverage method failed: {e} Falling back to unary method.")
+        cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'), crs="EPSG:4326")
+    cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
+    if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
+        cluster_exterior_ring = [cluster_geometry_no_divides_epsg.item().exterior]  # shapely.geometry.polygon.LinearRing
+        cluster_interior_rings = list(cluster_geometry_no_divides_epsg.item().interiors)  # shapely.geometry.polygon.LinearRing
+        multipolygon = False
+    elif cluster_geometry_no_divides_epsg.item().geom_type == 'MultiPolygon':
+        polygons = list(cluster_geometry_no_divides_epsg.item().geoms)
+        cluster_exterior_ring = [polygon.exterior for polygon in polygons]  # list of shapely.geometry.polygon.LinearRing
+        num_multipoly = len(cluster_exterior_ring)
+        cluster_interior_ringSequences = [polygon.interiors for polygon in polygons]  # list of shapely.geometry.polygon.InteriorRingSequence
+        cluster_interior_rings = [ring for sequence in cluster_interior_ringSequences for ring in sequence]  # list of shapely.geometry.polygon.LinearRing
+        multipolygon = True
+    else: raise ValueError("Unexpected geometry type. Please check.")
 
-        # Now remove all ice divides
-        cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.unary_union, crs="EPSG:4326")
-        cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
-        if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
-            cluster_exterior_ring = [cluster_geometry_no_divides_epsg.item().exterior]  # shapely.geometry.polygon.LinearRing
-            cluster_interior_rings = list(cluster_geometry_no_divides_epsg.item().interiors)  # shapely.geometry.polygon.LinearRing
-            multipolygon = False
-        elif cluster_geometry_no_divides_epsg.item().geom_type == 'MultiPolygon':
-            polygons = list(cluster_geometry_no_divides_epsg.item().geoms)
-            cluster_exterior_ring = [polygon.exterior for polygon in polygons]  # list of shapely.geometry.polygon.LinearRing
-            num_multipoly = len(cluster_exterior_ring)
-            cluster_interior_ringSequences = [polygon.interiors for polygon in polygons]  # list of shapely.geometry.polygon.InteriorRingSequence
-            cluster_interior_rings = [ring for sequence in cluster_interior_ringSequences for ring in sequence]  # list of shapely.geometry.polygon.LinearRing
-            multipolygon = True
-        else: raise ValueError("Unexpected geometry type. Please check.")
-
-        # Create a geoseries of all external and internal geometries
-        geoseries_geometries_epsg = gpd.GeoSeries(cluster_exterior_ring + cluster_interior_rings, crs=glacier_epsg)
-
-    # Get all generated points and create Geopandas geoseries and convert to UTM
-    list_points = [Point(lon, lat) for (lon, lat) in zip(points_df['lons'], points_df['lats'])]
-    geoseries_points_4326 = gpd.GeoSeries(list_points, crs="EPSG:4326")
-    geoseries_points_epsg = geoseries_points_4326.to_crs(epsg=glacier_epsg)
-
-    print(f"We have {len(geoseries_geometries_epsg)} geometries in the cluster") if verbose else None
+    # Create a geoseries of all external and internal geometries
+    geoseries_geometries_epsg = gpd.GeoSeries(cluster_exterior_ring + cluster_interior_rings, crs=glacier_epsg)
+    no_geometries_in_cluster = len(geoseries_geometries_epsg)
+    print(f"Cluster: {no_geometries_in_cluster} geometries created in: {time.time()-tgeoms0:.3f}") if verbose else None
 
     # Method that uses KDTree index (best method: found to be same as exact method and ultra fast)
     run_method_KDTree_index = True
@@ -1794,25 +1942,32 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
 
         td1 = time.time()
 
-        # Extract all coordinates of GeoSeries points
-        points_coords_array = np.column_stack((geoseries_points_epsg.geometry.x, geoseries_points_epsg.geometry.y)) #(10000,2)
+        # Extract all utm coordinates of points
+        points_coords_array = np.column_stack((eastings, northings)) #(10000,2)
 
         # Extract all coordinates from the GeoSeries geometries
+        #todo: why is this for rgi 5, 19?
         #if (rgi in (5,19) and len(geoseries_geometries_epsg)>1):
             #geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg[1:].geometry])
         #else:
         geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
 
-        kdtree = KDTree(geoms_coords_array)
+        # it appears that when no. geometries is low pykdtree_kdtree is faster, else sklearn KDTree is faster.
+        if no_geometries_in_cluster > 2000:
+            kdtree = sklearn.neighbors.KDTree(geoms_coords_array)
+            print('using sklearn.neighbors.KDTree')
+        else:
+            kdtree = pykdtree.kdtree.KDTree(geoms_coords_array)
+            print('using pykdtree.kdtree.KDTree')
 
         # Perform nearest neighbor search for each point and calculate minimum distances
-        # k can be decreased for speedup to, e.g. k=10000
-        distances, indices = kdtree.query(points_coords_array, k=min(10000,len(geoseries_geometries_epsg)))
+        # k can be decreased for speedup to, e.g. k=200. I suspect that k can be somehow as low as 200, and in such
+        # case probably pykdtree_kdtree is faster than KDTree
+        distances, indices = kdtree.query(points_coords_array, k=min(k_max_geoms,len(geoseries_geometries_epsg)))
+        if distances.ndim == 1: distances = distances.reshape(-1, 1) # needed for use_pykdtree_kdtree
         min_distances = np.min(distances, axis=1)
 
         min_distances /= 1000.
-
-        # Retrieve the geometries corresponding to the indices
 
         td2 = time.time()
         print(f"Distances calculated with KDTree in {td2 - td1}") if verbose else None
@@ -1824,6 +1979,8 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
         ax.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='k')  # first entry is outside border
         for geom in geoseries_geometries_epsg.loc[1:]:
             ax.plot(*geom.xy, lw=1, c='grey')
+        #for geom in geoseries_geometries_epsg.loc[20:]:
+        #    ax.plot(*geom.xy, lw=1, c='r')
         s1 = ax.scatter(x=points_coords_array[:,0], y=points_coords_array[:,1], s=1, c=min_distances, zorder=0)
         #s1 = ax.scatter(x=points_df['lons'], y=points_df['lats'], s=10, c=min_distances3, alpha=0.5, zorder=0)
         cbar = plt.colorbar(s1, ax=ax)
@@ -1895,6 +2052,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
             # Plot
             plot_calculate_distance = False
             if plot_calculate_distance:
+
                 fig, (ax1, ax2) = plt.subplots(1,2)
                 ax1.plot(*gl_geom_ext.exterior.xy, lw=1, c='red')
                 for interior in gl_geom.interiors:
@@ -1907,11 +2065,19 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
                         gl_neighbor_geom = gl_neighbor_df['geometry'].item()  # glacier geometry Polygon
                         ax1.plot(*gl_neighbor_geom.exterior.xy, lw=1, c='orange', zorder=0)
 
+                # intersects of glacier (need only for plotting purposes)
+                gl_intersects = oggm.utils.get_rgi_intersects_entities([glacier_name], version='62')
                 # Plot intersections of central glacier with its neighbors
                 for k, intersect in enumerate(gl_intersects['geometry']):  # Linestring gl_intersects
                     ax1.plot(*intersect.xy, lw=1, color='k')
 
                 # Plot intersections of all glaciers in the cluster
+                if list_cluster_RGIIds is not None:
+                    cluster_intersects = oggm.utils.get_rgi_intersects_entities(list_cluster_RGIIds,
+                                                                                version='62')  # (need only for plotting purposes)
+                else:
+                    cluster_intersects = None
+
                 if cluster_intersects is not None:
                     for k, intersect in enumerate(cluster_intersects['geometry']):
                         ax1.plot(*intersect.xy, lw=1, color='k') #np.random.rand(3)
@@ -1964,10 +2130,13 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     print(f"Calculating the distances from ocean... ") if verbose else None
     tdistocean0 = time.time()
 
-    gdf16 = gpd.read_file(f'{args.GSHHG_folder}GSHHS_f_L1_L6.shp', engine='pyogrio') # subotimal to import every time
-
     buffer = 1
-    box_geoms = gdf16.cx[llx-buffer:urx+buffer,lly-buffer:ury+buffer]
+    box_geoms = coastlines_dataframe.cx[llx-buffer:urx+buffer,lly-buffer:ury+buffer]
+
+    #fig, ax = plt.subplots()
+    #box_geoms.plot(ax=ax, linestyle='-', linewidth=1, facecolor='none', edgecolor='red')
+    #geoseries_points_4326.plot(ax=ax, c='r', markersize=2)
+    #plt.show()
 
     if len(box_geoms) == 0:
         # We are in the island case in Antarctica, e.g. -73.10288797227037 -105.166778923743
@@ -1976,13 +2145,13 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
         points_df['dist_from_ocean'] = points_df['dist_from_border_km_geom']
 
     else:
-
+        # Reproject to glacier_epsg. This is approximately 0.13 s and the main computational cost for this method
         box_geoms_epsg = box_geoms.to_crs(glacier_epsg)
 
         # Extract all coordinates of GeoSeries geometries
         geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in box_geoms_epsg.geometry.exterior])
 
-        # Reprojecting very big geometries cause distortion. Let's remove these points.
+        # Reprojecting very big geometries cause distortion. Let's remove these points. Is this necessary ?
         valid_coords_mask = (
                 (geoms_coords_array[:, 0] >= -1e7) & (geoms_coords_array[:, 0] <= 1e7) &
                 (geoms_coords_array[:, 1] >= -1e7) & (geoms_coords_array[:, 1] <= 1e7)
@@ -1990,23 +2159,19 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
         valid_coords = geoms_coords_array[valid_coords_mask]
 
         #fig, ax = plt.subplots()
-        #box_geoms_epsg.plot(ax=ax, linestyle='-', linewidth=1, facecolor='none', edgecolor='red')
+        #box_geoms_epsg.plot(ax=ax, linestyle='-', linewidth=1, facecolor='none', edgecolor='k')
         #geoseries_points_epsg.plot(ax=ax, c='k', markersize=2)
         #plt.show()
 
-        kdtree_ocean = KDTree(valid_coords)
+        # using pykdtree.kdtree.KDTree
+        kdtree_ocean = pykdtree.kdtree.KDTree(valid_coords)
 
         distances_ocean, _ = kdtree_ocean.query(points_coords_array, k=len(box_geoms))
+        if distances_ocean.ndim == 1: distances_ocean = distances_ocean.reshape(-1, 1)
         min_distances_ocean = np.min(distances_ocean, axis=1)
         min_distances_ocean /= 1000.
 
         points_df['dist_from_ocean'] = min_distances_ocean
-
-    #fig, ax = plt.subplots()
-    #s = ax.scatter(x=points_df['lons'], y=points_df['lats'], s=1, c=points_df['dist_from_ocean'])
-    #cbar = plt.colorbar(s)
-    #plt.show()
-
 
     tdistocean1 = time.time()
     tdistocean = tdistocean1 - tdistocean0
@@ -2021,7 +2186,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
             ax.plot(*gl_geom_ext.exterior.xy, lw=1, c='red')
             for interior in gl_geom.interiors:
                 ax.plot(*interior.xy, lw=1, c='blue')
-            for (lon, lat, nunatak) in zip(points['lons'], points['lats'], points['nunataks']):
+            for (lon, lat, nunatak) in zip(points_df['lons'], points_df['lats'], points_df['nunataks']):
                 if nunatak: ax.scatter(lon, lat, s=50, lw=2, c='magenta', zorder=2)
                 else: ax.scatter(lon, lat, s=50, lw=2, c='r', ec='r', zorder=1)
 
@@ -2135,7 +2300,7 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
 
     # 3. No velocity imputation needed
     else:
-        print('No velocity imputation needed.')
+        print('No velocity imputation needed.') if verbose else None
         plot_velocity_field = False
         if plot_velocity_field:
             fig, ax = plt.subplots()
@@ -2181,11 +2346,11 @@ def populate_glacier_with_metadata(glacier_name, n=50, seed=None, verbose=True):
     if verbose:
         print(f"************** TIMES **************")
         print(f"Geometries generation: {tgeometries:.2f}")
-        print(f"Points generation: {tgenpoints:.2f}")
+        print(f"Points generation: {tgenpoints:.3f}")
         print(f"Millan: {tmillan:.2f}")
         print(f"Slope: {tslope:.2f}")
         print(f"Smb: {tsmb:.2f}")
-        print(f"Temperature: {tera5:.2f}")
+        print(f"Temperature: {tera5:.3f}")
         print(f"Farinotti: {tfar:.3f}")
         print(f"Distances: {tdist:.2f}")
         print(f"Distances ocean: {tdistocean:.2f}")
@@ -2204,5 +2369,6 @@ if __name__ == "__main__":
     generated_points_dataframe = populate_glacier_with_metadata(
                                             glacier_name=glacier_name,
                                             n=30000,
+                                            k=10000,
                                             seed=42,
                                             verbose=True)
