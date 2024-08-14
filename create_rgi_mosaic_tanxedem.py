@@ -117,17 +117,22 @@ def create_glacier_tile_dem_mosaic(minx, miny, maxx, maxy, rgi, path_tandemx):
     #print(matching_files)
 
     # Create Mosaic
+    t0_get_tiles = time.time()
     src_files_to_mosaic = []
     for i, file in enumerate(matching_files):
         #print(i, file)
         src = rioxarray.open_rasterio(file, cache=True)
         src.rio.write_crs("EPSG:4326", inplace=True)
-        src = src.where(src != src.rio.nodata)  # replace nodata (-32767).0 with nans.
+        #src = src.where(src != src.rio.nodata)  # replace nodata (-32767).0 with nans. # using .where
+        mask_nans = src == src.rio.nodata # using boolean masks is a bit faster
+        src.values[mask_nans.values] = np.nan
         src.rio.write_nodata(np.nan, inplace=True)  # set nodata as nan
         #fig, ax1 = plt.subplots()
         #im1 = src.plot(ax=ax1, cmap='terrain')
         #plt.show()
         src_files_to_mosaic.append(src)
+    t1_get_tiles = time.time()
+    #print(f"Time for importing single tiles: {t1_get_tiles-t0_get_tiles} s")
 
     res_out = min(np.abs(src.rio.resolution()))
     assert res_out == 1. / 3600, "Unexpected resolution for merging tiles."
