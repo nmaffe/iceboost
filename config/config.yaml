@@ -1,15 +1,20 @@
 # paths and files
 tandemx_dir: '/media/maffe/nvme/Tandem-X-EDEM/'
 oggm_dir: '/home/maffe/OGGM/'
+coastlines_gshhg_dir: '/media/maffe/nvme/gshhg/'
 model_input_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/'
-model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20240731/'
+model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20240731_k3/'
 model_filename_xgb: 'iceboost_xgb_20240731.json'
 model_filename_cat: 'iceboost_cat_20240731.cbm'
 filename_csv_deploy: 'iceboost_deploy_list_id.csv'
 metadata_csv_file: '/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata35_hmineq0.0_tmin20050000_mean_grid_100.csv'
 
+# model deploy save figures
+deploy_save_figs: 0
+
 # configs for feature fetching
-kdtree_dist_max_k_geometries: 10000 # maximum number of geometries considered in dist method.
+graph_max_layer_depth: 3 # maximum depth consider in the graph used to calculate the glacier cluster
+kdtree_dist_max_k_geometries: 99999 # maximum number of geometries considered in dist method.
 
 # configs for model inference
 featuresBase: &base ['Area', 'Perimeter', 'Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'Aspect', 'TermType',
@@ -27,6 +32,3 @@ n_points_regression: 30000
 target: 'THICKNESS'
 millan: 'ith_m'
 farinotti: 'ith_f'
-
-# model deploy save figures
-deploy_save_figs: 0
