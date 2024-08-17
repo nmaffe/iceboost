@@ -5,6 +5,10 @@ import numpy as np
 import geopandas as gpd
 from sklearn.neighbors import KDTree
 from oggm import utils
+import xgboost as xgb
+import catboost as cb
+from PIL import Image
+import matplotlib.pyplot as plt
 
 def haversine(lon1, lat1, lon2, lat2):
     """
@@ -161,3 +165,33 @@ def create_train_test(df, rgi=None, frac=0.1, full_shuffle=None, seed=None):
     #print(train.describe().T)
     #input('wait')
     return train, test
+
+def load_models(config_file):
+
+    model_xgb_filename = config_file.model_input_dir + config_file.model_filename_xgb
+    iceboost_xgb = xgb.Booster()
+    iceboost_xgb.load_model(model_xgb_filename)
+
+    model_cat_filename = config_file.model_input_dir + config_file.model_filename_cat
+    iceboost_cat = cb.CatBoostRegressor()
+    iceboost_cat.load_model(model_cat_filename, format='cbm')
+
+    return iceboost_xgb, iceboost_cat
+
+def create_PIL_image(array, png_resolution=None):
+    """
+    Given 2d numpy ndarray returns PIL image for .png
+    """
+    array = np.flipud(array)
+    array_min = np.nanmin(array)
+    array_max = np.nanmax(array)
+    array_normalized = (array - array_min) / (array_max - array_min) * 255
+    array_normalized = np.nan_to_num(array_normalized, nan=0).astype(np.uint8)
+    colormap = plt.cm.jet
+    colored_array = colormap(array_normalized)
+    colored_array = (colored_array[:, :, :3] * 255).astype(np.uint8)
+    alpha_channel = np.where(np.isnan(array), 0, 255).astype(np.uint8)
+    rgba_array = np.dstack((colored_array, alpha_channel))
+    image = Image.fromarray(rgba_array)
+    image_resized = image.resize((png_resolution, png_resolution), Image.Resampling.LANCZOS)
+    return image_resized
