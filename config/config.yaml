@@ -2,8 +2,21 @@
 tandemx_dir: '/media/maffe/nvme/Tandem-X-EDEM/'
 oggm_dir: '/home/maffe/OGGM/'
 coastlines_gshhg_dir: '/media/maffe/nvme/gshhg/'
+racmo_dir: '/media/maffe/nvme/racmo/'
+ERA5_t2m_dir: '/media/maffe/nvme/ERA5/'
+
+millan_velocity_dir: '/media/maffe/nvme/Millan/velocity/'
+NSIDC_velocity_Greenland_dir: '/media/maffe/nvme/Greenland_NSIDC/velocity/'
+NSIDC_velocity_Antarctica_dir: '/media/maffe/nvme/Antarctica_NSIDC/velocity/NSIDC-0754/'
+
+millan_icethickness_dir: '/media/maffe/nvme/Millan/thickness/'
+farinotti_icethickness_dir: '/media/maffe/nvme/Farinotti/composite_thickness_RGI60-all_regions/'
+NSIDC_icethickness_Greenland_dir: '/media/maffe/nvme/Greenland_NSIDC/thickness/' # BedMachine_v5
+NSIDC_icethickness_Antarctica_dir: '/media/maffe/nvme/Antarctica_NSIDC/thickness/NSIDC-0756/' # BedMachine v3
+
 model_input_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/'
 model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20240731_k3/'
+model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/'
 model_filename_xgb: 'iceboost_xgb_20240731.json'
 model_filename_cat: 'iceboost_cat_20240731.cbm'
 filename_csv_deploy: 'iceboost_deploy_list_id.csv'
