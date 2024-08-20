@@ -3,6 +3,7 @@ import scipy
 import random
 import numpy as np
 import geopandas as gpd
+from pyproj import Transformer
 from sklearn.neighbors import KDTree
 from oggm import utils
 import xgboost as xgb
@@ -79,10 +80,13 @@ def get_cmap(name):
     return cm
 
 
-# shap.plots.bar(shap_values, max_display=len(CFG.features))
+def calc_geoid_heights(lons=None, lats=None, h_wgs84=None):
+    '''Calculates orthometric heights'''
+    transformer = Transformer.from_crs("epsg:4326", "epsg:3855", always_xy=True)
+    _, _, h_egm2008 = transformer.transform(lons, lats, h_wgs84)
+    return h_egm2008
 
-
-def calc_volume_glacier(y1=None, y2=None, area=0):
+def calc_volume_glacier(y1=None, y2=None, area=0, lons=None, lats=None, h_egm2008=None):
     '''
     :param y1: numpy.ndarray. Ice thickness [m]
     :param y2: numpy.ndarray. Ice thickness [m]
@@ -92,10 +96,11 @@ def calc_volume_glacier(y1=None, y2=None, area=0):
     y_xgb = y1
     y_cat = y2
     N = len(y1)
+    f = 0.001 * area / N
 
     # Millan or Farinotti
     if y2 is None:
-        volume = np.sum(y1) * 0.001 * area / N
+        volume = np.sum(y1) * f
         return volume
 
     # iceboost
@@ -103,20 +108,22 @@ def calc_volume_glacier(y1=None, y2=None, area=0):
         y_mean = 0.5 * (y_xgb + y_cat)
         y_mean = np.where(y_mean < 0, 0, y_mean)
 
-        volume = np.sum(y_mean) * 0.001 * area / N
+        # volume ice
+        volume = np.sum(y_mean) * f
+        # volume ice above floatation
+        #volume_af = np.sum(np.where(h_egm2008 - y_mean > 0, y_mean, h_egm2008)) * f
+        # volume ice below floatation
+        volume_bf = np.sum(np.where(h_egm2008 - y_mean > 0, 0.0, y_mean - h_egm2008)) * f
 
         err_points = np.std((y_xgb, y_cat), axis=0)
-
         # This error considers the point-wise spread between the models
-        err_volume_points = 0.001 * area / N * np.sqrt(np.sum(err_points**2))
-
+        err_volume_points = np.sqrt(np.sum(err_points**2)) * f
         # This error is the semi-difference of the 2 modeled volumes.
-        err_volume_range = 0.5 * np.abs(np.sum(y_xgb) - np.sum(y_cat)) * 0.001 * area / N
-
+        err_volume_range = 0.5 * np.abs(np.sum(y_xgb) - np.sum(y_cat)) * f
         # Add in quadrature the two errors
         err_volume = np.sqrt(err_volume_points**2 + err_volume_range**2)
 
-        return volume, err_volume
+        return volume, err_volume, volume_bf
 
 
 def get_random_glacier_rgiid(name=None, rgi=11, area=None, seed=None):
