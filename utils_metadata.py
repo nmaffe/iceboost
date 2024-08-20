@@ -82,14 +82,41 @@ def get_cmap(name):
 # shap.plots.bar(shap_values, max_display=len(CFG.features))
 
 
-def calc_volume_glacier(points_thickness, area=0):
-    '''points_thickness is a <class 'pandas.core.series.Series'>
-    If the series contains only nan, the returned volume will be zero'''
-    # A potential drawback of this method is that I am randomly sampling in epsg:4326. In a utm projection
-    # such sampling does not turn out to be uniform. Returned volume in km3.
-    N = len(points_thickness)
-    volume = np.sum(points_thickness) * 0.001 * area / N
-    return volume
+def calc_volume_glacier(y1=None, y2=None, area=0):
+    '''
+    :param y1: numpy.ndarray. Ice thickness [m]
+    :param y2: numpy.ndarray. Ice thickness [m]
+    :param area: float [km2]
+    :return: volume [km3].
+    '''
+    y_xgb = y1
+    y_cat = y2
+    N = len(y1)
+
+    # Millan or Farinotti
+    if y2 is None:
+        volume = np.sum(y1) * 0.001 * area / N
+        return volume
+
+    # iceboost
+    else:
+        y_mean = 0.5 * (y_xgb + y_cat)
+        y_mean = np.where(y_mean < 0, 0, y_mean)
+
+        volume = np.sum(y_mean) * 0.001 * area / N
+
+        err_points = np.std((y_xgb, y_cat), axis=0)
+
+        # This error considers the point-wise spread between the models
+        err_volume_points = 0.001 * area / N * np.sqrt(np.sum(err_points**2))
+
+        # This error is the semi-difference of the 2 modeled volumes.
+        err_volume_range = 0.5 * np.abs(np.sum(y_xgb) - np.sum(y_cat)) * 0.001 * area / N
+
+        # Add in quadrature the two errors
+        err_volume = np.sqrt(err_volume_points**2 + err_volume_range**2)
+
+        return volume, err_volume
 
 
 def get_random_glacier_rgiid(name=None, rgi=11, area=None, seed=None):
