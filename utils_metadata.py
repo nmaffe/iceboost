@@ -86,7 +86,7 @@ def calc_geoid_heights(lons=None, lats=None, h_wgs84=None):
     _, _, h_egm2008 = transformer.transform(lons, lats, h_wgs84)
     return h_egm2008
 
-def calc_volume_glacier(y1=None, y2=None, area=0, lons=None, lats=None, h_egm2008=None):
+def calc_volume_glacier(y1=None, y2=None, area=0, h_egm2008=None):
     '''
     :param y1: numpy.ndarray. Ice thickness [m]
     :param y2: numpy.ndarray. Ice thickness [m]
@@ -110,10 +110,10 @@ def calc_volume_glacier(y1=None, y2=None, area=0, lons=None, lats=None, h_egm200
 
         # volume ice
         volume = np.sum(y_mean) * f
-        # volume ice above floatation
+        # volume ice above sea level
         #volume_af = np.sum(np.where(h_egm2008 - y_mean > 0, y_mean, h_egm2008)) * f
-        # volume ice below floatation
-        volume_bf = np.sum(np.where(h_egm2008 - y_mean > 0, 0.0, y_mean - h_egm2008)) * f
+        # volume ice below sea level
+        volume_bsl = np.sum(np.where(h_egm2008 - y_mean > 0, 0.0, y_mean - h_egm2008)) * f
 
         err_points = np.std((y_xgb, y_cat), axis=0)
         # This error considers the point-wise spread between the models
@@ -123,7 +123,7 @@ def calc_volume_glacier(y1=None, y2=None, area=0, lons=None, lats=None, h_egm200
         # Add in quadrature the two errors
         err_volume = np.sqrt(err_volume_points**2 + err_volume_range**2)
 
-        return volume, err_volume, volume_bf
+        return volume, err_volume, volume_bsl
 
 
 def get_random_glacier_rgiid(name=None, rgi=11, area=None, seed=None):
