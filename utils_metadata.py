@@ -5,6 +5,7 @@ import numpy as np
 import geopandas as gpd
 from pyproj import Transformer
 from sklearn.neighbors import KDTree
+from scipy.spatial import distance_matrix
 from oggm import utils
 import xgboost as xgb
 import catboost as cb
@@ -26,6 +27,23 @@ def haversine(lon1, lat1, lon2, lat2):
     c = 2 * np.arcsin(np.sqrt(a))
     r = 6371 # Radius of earth in kilometers. Determines return value units.
     return c * r
+
+def lmax_with_covex_hull(geometry, glacier_epsg):
+    '''
+    This method calculates lmax using the geometry convex hull.
+    It should be exactly equivalent to lmax_imputer with KDTree but much faster.
+    '''
+    geometry_epsg = geometry.to_crs(epsg=glacier_epsg) # Geodataframe
+    gl_geom = geometry_epsg.iloc[0].geometry  # Polygon
+
+    # Compute the convex hull
+    convex_hull = gl_geom.convex_hull
+    # Extract coordinates from the convex hull's exterior
+    coords_hull = np.array(convex_hull.exterior.coords)
+    # Compute pairwise distances between all points on the convex hull
+    dist_matrix = distance_matrix(coords_hull, coords_hull)
+    lmax = np.max(dist_matrix)
+    return lmax
 
 def lmax_imputer(geometry, glacier_epsg):
     '''
