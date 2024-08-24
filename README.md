@@ -1,4 +1,8 @@
-# IceBoost
+<div align="center">
+    <img alt="Logo" src="img/logo_iceboost.svg" style="width: 100%; height: auto;" />
+</div>
+
+# ICEBOOST
 
 ---
 a Gradient-Boosted Tree framework 
