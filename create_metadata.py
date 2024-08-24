@@ -2153,6 +2153,7 @@ def add_dist_from_boder_using_geometries(glathida):
             gl_intersects = oggm.utils.get_rgi_intersects_entities([rgi_id], version='62')
 
             # Calculate intersects of all glaciers in the cluster
+            #todo: replace find_cluster_RGIIds with networkx graph, more precise. See fetch metadata
             list_cluster_RGIIds = find_cluster_RGIIds(rgi_id, oggm_rgi_intersects)
             #print(f"List of glacier cluster: {list_cluster_RGIIds}")
 
@@ -2162,6 +2163,7 @@ def add_dist_from_boder_using_geometries(glathida):
             else: cluster_intersects = None
 
             # Now calculate the geometries
+            # todo: remove this if-else
             if list_cluster_RGIIds is None:  # Case 1: isolated glacier
                 #print(f"Isolated glacier")
                 exterior_ring = gl_geom.exterior  # shapely.geometry.polygon.LinearRing
@@ -2181,6 +2183,7 @@ def add_dist_from_boder_using_geometries(glathida):
                 cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
 
                 # Now remove all ice divides
+                # todo: replace .unary_union with .union_all(method='coverage')
                 cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.unary_union, crs="EPSG:4326")
                 cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
                 if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
