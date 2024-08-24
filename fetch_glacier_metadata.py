@@ -20,7 +20,7 @@ from rioxarray import merge
 import geopandas as gpd
 import oggm
 from oggm import utils
-from shapely.geometry import Point, Polygon, LineString, MultiLineString
+from shapely.geometry import Point, Polygon, LineString, MultiLineString, box
 from shapely.errors import GEOSException
 from pyproj import Proj, Transformer, Geod
 import utm
@@ -29,7 +29,7 @@ from functools import partial
 import networkx
 
 from create_rgi_mosaic_tanxedem import fetch_dem, create_glacier_tile_dem_mosaic
-from utils_metadata import haversine, from_lat_lon_to_utm_and_epsg, gaussian_filter_with_nans, lmax_imputer
+from utils_metadata import *
 from imputation_policies import smb_elev_functs, smb_elev_functs_hugo, velocity_median_rgi
 
 pd.set_option('display.max_colwidth', None)
@@ -116,17 +116,6 @@ def populate_glacier_with_metadata(glacier_name,
                                    seed=None,
                                    verbose=True):
 
-    class args:
-        mosaic = "/media/maffe/nvme/Tandem-X-EDEM/"
-        millan_velocity_folder = "/media/maffe/nvme/Millan/velocity/"
-        millan_icethickness_folder = "/media/maffe/nvme/Millan/thickness/"
-        NSIDC_icethickness_folder_Greenland = "/media/maffe/nvme/BedMachine_v5/" # BedMachine_v5
-        NSIDC_velocity_folder_Antarctica = "/media/maffe/nvme/Antarctica_NSIDC/velocity/NSIDC-0754/"
-        NSIDC_icethickness_folder_Antarctica = "/media/maffe/nvme/Antarctica_NSIDC/thickness/NSIDC-0756/"
-        farinotti_icethickness_folder = "/media/maffe/nvme/Farinotti/composite_thickness_RGI60-all_regions/"
-        RACMO_folder = "/media/maffe/nvme/racmo"
-        path_ERA5_t2m_folder = "/media/maffe/nvme/ERA5/"
-        GSHHG_folder = "/media/maffe/nvme/gshhg/"
 
     print(f"******* FETCHING FEATURES FOR GLACIER {glacier_name} *******") if verbose else None
     tin=time.time()
@@ -232,8 +221,8 @@ def populate_glacier_with_metadata(glacier_name,
     #points_df['Zmax'] = gl_df['Zmax'].item() # we use tandemx for this
     #points_df['Zmed'] = gl_df['Zmed'].item() # we use tandemx for this
     points_df['Slope'] = gl_df['Slope'].item()
-    points_df['Lmax'] = gl_df['Lmax'].item()
-    points_df['Form'] = gl_df['Form'].item()
+    points_df['Lmax'] = gl_df['Lmax'].item() #todo: to be replaced with lmax_with_covex_hull !
+    #points_df['Form'] = gl_df['Form'].item() # not used anymore
     points_df['TermType'] = gl_df['TermType'].item()
     points_df['Aspect'] = gl_df['Aspect'].item()
 
@@ -252,9 +241,10 @@ def populate_glacier_with_metadata(glacier_name,
     points_df['Perimeter'] = perimeter_ice      # m
     points_df['Area_icefree'] = area_noice      # unitless
 
-    # Data imputation for lmax (needed for sure for rgi19)
+    # Data imputation for lmax (needed for sure for rgi 1 mostly)
     if gl_df['Lmax'].item() == -9:
-        lmax = lmax_imputer(gl_geom_ext_gdf, glacier_epsg)
+        #lmax = lmax_imputer(gl_geom_ext_gdf, glacier_epsg) # slower
+        lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg) # faster
         points_df['Lmax'] = lmax
 
     # Data imputation for the aspect (found needed for Greenland)
@@ -282,8 +272,8 @@ def populate_glacier_with_metadata(glacier_name,
 
     def fetch_millan_data_An(points_df):
 
-        files_vx = sorted(glob(f"{args.millan_velocity_folder}RGI-19/VX_RGI-19*"))
-        files_ith = sorted(glob(f"{args.millan_icethickness_folder}RGI-19/THICKNESS_RGI-19*"))
+        files_vx = sorted(glob(f"{config.millan_velocity_dir}RGI-19/VX_RGI-19*"))
+        files_ith = sorted(glob(f"{config.millan_icethickness_dir}RGI-19/THICKNESS_RGI-19*"))
         print(f"Glacier {glacier_name} found. Lat: {cenLat}, Lon: {cenLon}") if verbose else None
 
         # Check if glacier is inside the 5 Millan ith tiles
@@ -299,7 +289,7 @@ def populate_glacier_with_metadata(glacier_name,
                 break
 
         if inside_millan:
-            print("Interpolating Millan Antarctica")
+            print("Interpolating Millan Antarctica") if verbose else None
 
             tile_ith = rioxarray.open_rasterio(file_ith, masked=False)
 
@@ -310,7 +300,7 @@ def populate_glacier_with_metadata(glacier_name,
             condnodata = np.all(np.abs(tile_ith.values - tile_ith.rio.nodata) < 1.e-6)
             condnan = np.all(np.isnan(tile_ith.values))
             all_zero_or_nodata = cond0 or condnodata or condnan
-            print(f"Cond1: {all_zero_or_nodata}")
+            print(f"Cond1: {all_zero_or_nodata}") if verbose else None
 
             eastings_ar = xarray.DataArray(eastings)
             northings_ar = xarray.DataArray(northings)
@@ -319,7 +309,7 @@ def populate_glacier_with_metadata(glacier_name,
 
             cond_valid_fast_interp = (np.isnan(vals_fast_interp).all() or
                                       np.all(np.abs(vals_fast_interp - tile_ith.rio.nodata) < 1.e-6))
-            print(f"Cond2: {cond_valid_fast_interp}")
+            print(f"Cond2: {cond_valid_fast_interp}") if verbose else None
 
             if all_zero_or_nodata==False and cond_valid_fast_interp==False:
 
@@ -337,13 +327,13 @@ def populate_glacier_with_metadata(glacier_name,
                 # Fill dataframe with Millan ith
                 points_df['ith_m'] = ith_data
 
-                print("Millan ith interpolated.")
+                print("Millan ith interpolated.") if verbose else None
                 #fig, ax = plt.subplots()
                 #tile_ith.plot(ax=ax, cmap='viridis')
                 #ax.scatter(x=eastings, y=northings, s=10, c=ith_data)
                 #plt.show()
             else:
-                print('No Millan ith interpolation possible.')
+                print('No Millan ith interpolation possible.') if verbose else None
 
             """Now interpolate Millan velocity"""
             # In rgi 19 there is no need to make all the group occupancy stuff since tiles do not overlap.
@@ -354,14 +344,14 @@ def populate_glacier_with_metadata(glacier_name,
             code_19_dot_x = file_ith_nopath_nodate.rsplit('-', 1)[1]
             #print(file_ith_nopath, file_ith_nopath_nodate, code_19_dot_x)
 
-            file_vx = glob(f"{args.millan_velocity_folder}RGI-19/VX_RGI-{code_19_dot_x}*")
-            file_vy = glob(f"{args.millan_velocity_folder}RGI-19/VY_RGI-{code_19_dot_x}*")
+            file_vx = glob(f"{config.millan_velocity_dir}RGI-19/VX_RGI-{code_19_dot_x}*")
+            file_vy = glob(f"{config.millan_velocity_dir}RGI-19/VY_RGI-{code_19_dot_x}*")
 
             if file_vx and file_vy:
-                print('Found Millan velocity tiles.')
+                print('Found Millan velocity tiles.') if verbose else None
                 file_vx, file_vy = file_vx[0], file_vy[0]
-                print(file_vx)
-                print(file_vy)
+                print(file_vx) if verbose else None
+                print(file_vy) if verbose else None
 
                 tile_vx = rioxarray.open_rasterio(file_vx, masked=False)
                 tile_vy = rioxarray.open_rasterio(file_vy, masked=False)
@@ -432,7 +422,7 @@ def populate_glacier_with_metadata(glacier_name,
 
                     focus_ith = tile_ith.squeeze()
                 except Exception as generic_error:
-                    print("Impossible to smooth Millan tile with astropy.")
+                    print("Impossible to smooth Millan tile with astropy.") if verbose else None
                     return points_df
 
 
@@ -466,21 +456,21 @@ def populate_glacier_with_metadata(glacier_name,
                 points_df['vgfa'] = v_filter_af_data
 
             else:
-                print('No Millan velocity tiles found. Likely 19.5 tile')
+                print('No Millan velocity tiles found. Likely 19.5 tile') if verbose else None
 
             if verbose:
                 print(f"From Millan vx, vy, ith interpolations we have generated no. nans:")
                 print(", ".join([f"{col}: {points_df[col].isna().sum()}" for col in cols_millan]))
             if points_df['ith_m'].isna().all():
-                print(f"No Millan ith data can be found for rgi {rgi} glacier {glacier_name} at {cenLat} lat {cenLon} lon.")
+                print(f"No Millan ith data can be found for rgi {rgi} glacier {glacier_name} at {cenLat} lat {cenLon} lon.") if verbose else None
 
             return points_df
 
         else:
-            print("Interpolating NSIDC velocity and BedMachine Antarctica")
+            print("Interpolating NSIDC velocity and BedMachine Antarctica") if verbose else None
 
-            file_ith_NSIDC = f"{args.NSIDC_icethickness_folder_Antarctica}BedMachineAntarctica-v3.nc"
-            file_vel_NSIDC = f"{args.NSIDC_velocity_folder_Antarctica}antarctic_ice_vel_phase_map_v01.nc"
+            file_ith_NSIDC = f"{config.NSIDC_icethickness_Antarctica_dir}BedMachineAntarctica-v3.nc"
+            file_vel_NSIDC = f"{config.NSIDC_velocity_Antarctica_dir}antarctic_ice_vel_phase_map_v01.nc"
 
             v_NSIDC = rioxarray.open_rasterio(file_vel_NSIDC, masked=False)
             vx_NSIDC = v_NSIDC.VX
@@ -505,7 +495,7 @@ def populate_glacier_with_metadata(glacier_name,
             try:
                 ith_NSIDC = ith_NSIDC.rio.clip_box(minx=minE - epsM, miny=minN - epsM, maxx=maxE + epsM, maxy=maxN + epsM)
             except:
-                print('No NSIDC BedMachine ice thickness tiles around the points found.')
+                print('No NSIDC BedMachine ice thickness tiles around the points found.') if verbose else None
 
             #fig, ax = plt.subplots()
             #ith_NSIDC.plot(ax=ax, cmap='viridis')
@@ -516,13 +506,13 @@ def populate_glacier_with_metadata(glacier_name,
             condnodata = np.all(np.abs(ith_NSIDC.values - ith_NSIDC.rio.nodata) < 1.e-6)
             condnan = np.all(np.isnan(ith_NSIDC.values))
             all_zero_or_nodata = cond0 or condnodata or condnan
-            print(f"Cond1 ice thickness: {all_zero_or_nodata}")
+            print(f"Cond1 ice thickness: {all_zero_or_nodata}") if verbose else None
 
             vals_fast_interp = ith_NSIDC.interp(y=northings_ar, x=eastings_ar, method='nearest').data
 
             cond_valid_fast_interp = (np.isnan(vals_fast_interp).all() or
                                       np.all(np.abs(vals_fast_interp - ith_NSIDC.rio.nodata) < 1.e-6))
-            print(f"Cond2 ice thickness: {cond_valid_fast_interp}")
+            print(f"Cond2 ice thickness: {cond_valid_fast_interp}") if verbose else None
 
             if all_zero_or_nodata==False and cond_valid_fast_interp==False:
 
@@ -540,7 +530,7 @@ def populate_glacier_with_metadata(glacier_name,
 
                 # Fill dataframe with NSIDC BedMachine ith
                 points_df['ith_m'] = ith_data
-                print("NSIDC BedMachine ith interpolated.")
+                print("NSIDC BedMachine ith interpolated.") if verbose else None
 
                 #fig, ax = plt.subplots()
                 #ith_NSIDC.plot(ax=ax, cmap='viridis')
@@ -548,7 +538,7 @@ def populate_glacier_with_metadata(glacier_name,
                 #plt.show()
 
             else:
-                print('No NSIDC BedMachine ice thickness interpolation possible.')
+                print('No NSIDC BedMachine ice thickness interpolation possible.') if verbose else None
 
             """Now interpolate NSIDC velocity"""
             eps = 15000
@@ -556,7 +546,7 @@ def populate_glacier_with_metadata(glacier_name,
                 vx_NSIDC_focus = vx_NSIDC.rio.clip_box(minx=minE - eps, miny=minN - eps, maxx=maxE + eps, maxy=maxN + eps)
                 vy_NSIDC_focus = vy_NSIDC.rio.clip_box(minx=minE - eps, miny=minN - eps, maxx=maxE + eps, maxy=maxN + eps)
             except:
-                print('No NSIDC velocity tiles around the points found')
+                print('No NSIDC velocity tiles around the points found') if verbose else None
                 return points_df
 
             # Condition 1. Either v is .rio.nodata or it is zero or it is nan
@@ -564,14 +554,14 @@ def populate_glacier_with_metadata(glacier_name,
             condnodata = np.all(np.abs(vx_NSIDC_focus.values - vx_NSIDC_focus.rio.nodata) < 1.e-6)
             condnan = np.all(np.isnan(vx_NSIDC_focus.values))
             all_zero_or_nodata = cond0 or condnodata or condnan
-            print(f"Cond1 velocity: {all_zero_or_nodata}")
+            print(f"Cond1 velocity: {all_zero_or_nodata}") if verbose else None
 
             vals_fast_interp = vx_NSIDC_focus.interp(y=northings_ar, x=eastings_ar, method='nearest').data
 
             cond_valid_fast_interp = (np.isnan(vals_fast_interp).all() or
                                       np.all(np.abs(vals_fast_interp - vx_NSIDC_focus.rio.nodata) < 1.e-6))
 
-            print(f"Cond2 velocity: {cond_valid_fast_interp}")
+            print(f"Cond2 velocity: {cond_valid_fast_interp}") if verbose else None
 
             if all_zero_or_nodata == False and cond_valid_fast_interp == False:
 
@@ -666,7 +656,7 @@ def populate_glacier_with_metadata(glacier_name,
                 points_df['vgfa'] = v_filter_af_data
 
 
-                print("NSIDC velocity interpolated.")
+                print("NSIDC velocity interpolated.") if verbose else None
 
                 #fig, ax = plt.subplots()
                 #im = tile_vx.plot(ax=ax, cmap='binary', zorder=0, vmin=tile_vx.min(), vmax=tile_vx.max())
@@ -674,7 +664,7 @@ def populate_glacier_with_metadata(glacier_name,
                 #plt.show()
 
             else:
-                print('No NSIDC velocity interpolation possible.')
+                print('No NSIDC velocity interpolation possible.') if verbose else None
 
             return points_df
 
@@ -684,10 +674,10 @@ def populate_glacier_with_metadata(glacier_name,
         # The fact is that BedMachine appears to downgrade the resolution of Millan (see e.g. RGI60-05.15702).
         # Therefore I use Millan and, if not enough data at interpolation stage, rollback to BedMachine
 
-        file_vx = f"{args.millan_velocity_folder}RGI-5/greenland_vel_mosaic250_vx_v1.tif"
-        file_vy = f"{args.millan_velocity_folder}RGI-5/greenland_vel_mosaic250_vy_v1.tif"
-        files_ith = sorted(glob(f"{args.millan_icethickness_folder}RGI-5/THICKNESS_RGI-5*"))
-        file_ith_bedmacv5 = f"{args.NSIDC_icethickness_folder_Greenland}BedMachineGreenland-v5.nc"
+        file_vx = f"{config.NSIDC_velocity_Greenland_dir}greenland_vel_mosaic250_vx_v1.tif"
+        file_vy = f"{config.NSIDC_velocity_Greenland_dir}greenland_vel_mosaic250_vy_v1.tif"
+        files_ith = sorted(glob(f"{config.millan_icethickness_dir}RGI-5/THICKNESS_RGI-5*"))
+        file_ith_bedmacv5 = f"{config.NSIDC_icethickness_Greenland_dir}BedMachineGreenland-v5.nc"
 
         # Interpolate Millan
         # I need a dataframe for Millan with same indexes and lats lons
@@ -730,7 +720,7 @@ def populate_glacier_with_metadata(glacier_name,
 
             unique_ith_tiles = df_group.iloc[:, 2:].columns[df_group.iloc[:, 2:].sum() != 0].tolist()
 
-            group_lats, group_lons = df_group['lats'], df_group['lons']
+            group_lats, group_lons = df_group['lats'].values, df_group['lons'].values
 
             for file_ith in unique_ith_tiles:
 
@@ -1010,17 +1000,17 @@ def populate_glacier_with_metadata(glacier_name,
 
         # get Millan files
         if rgi in (1, 2):
-            files_vx = sorted(glob(f"{args.millan_velocity_folder}RGI-1-2/VX_RGI-1-2*"))
-            files_vy = sorted(glob(f"{args.millan_velocity_folder}RGI-1-2/VY_RGI-1-2*"))
-            files_ith = sorted(glob(f"{args.millan_icethickness_folder}RGI-1-2/THICKNESS_RGI-1-2*"))
+            files_vx = sorted(glob(f"{config.millan_velocity_dir}RGI-1-2/VX_RGI-1-2*"))
+            files_vy = sorted(glob(f"{config.millan_velocity_dir}RGI-1-2/VY_RGI-1-2*"))
+            files_ith = sorted(glob(f"{config.millan_icethickness_dir}RGI-1-2/THICKNESS_RGI-1-2*"))
         elif rgi in (13, 14, 15):
-            files_vx = sorted(glob(f"{args.millan_velocity_folder}RGI-13-15/VX_RGI-13-15*"))
-            files_vy = sorted(glob(f"{args.millan_velocity_folder}RGI-13-15/VY_RGI-13-15*"))
-            files_ith = sorted(glob(f"{args.millan_icethickness_folder}RGI-13-15/THICKNESS_RGI-13-15*"))
+            files_vx = sorted(glob(f"{config.millan_velocity_dir}RGI-13-15/VX_RGI-13-15*"))
+            files_vy = sorted(glob(f"{config.millan_velocity_dir}RGI-13-15/VY_RGI-13-15*"))
+            files_ith = sorted(glob(f"{config.millan_icethickness_dir}RGI-13-15/THICKNESS_RGI-13-15*"))
         else:
-            files_vx = sorted(glob(f"{args.millan_velocity_folder}RGI-{rgi}/VX_RGI-{rgi}*"))
-            files_vy = sorted(glob(f"{args.millan_velocity_folder}RGI-{rgi}/VY_RGI-{rgi}*"))
-            files_ith = sorted(glob(f"{args.millan_icethickness_folder}RGI-{rgi}/THICKNESS_RGI-{rgi}*"))
+            files_vx = sorted(glob(f"{config.millan_velocity_dir}RGI-{rgi}/VX_RGI-{rgi}*"))
+            files_vy = sorted(glob(f"{config.millan_velocity_dir}RGI-{rgi}/VY_RGI-{rgi}*"))
+            files_ith = sorted(glob(f"{config.millan_icethickness_dir}RGI-{rgi}/THICKNESS_RGI-{rgi}*"))
 
         # I need a dataframe for Millan with same indexes and lats lons
         df_pointsM = points_df[['lats', 'lons']].copy()
@@ -1034,8 +1024,13 @@ def populate_glacier_with_metadata(glacier_name,
             tile_vy = rioxarray.open_rasterio(file_vy, cache=True, masked=False) # may relax this
             tile_ith = rioxarray.open_rasterio(file_ith, cache=True, masked=False)
 
+            assert tile_vx.rio.bounds() == tile_vy.rio.bounds(), 'Different velocity bounds found.'
+
             if not tile_vx.rio.bounds() == tile_vy.rio.bounds() == tile_ith.rio.bounds():
+
                 tile_ith = tile_ith.reindex_like(tile_vx, method="nearest", tolerance=50., fill_value=np.nan)
+                # for rgi1-2 and 17 I save the reindexed ith tiles since reindexing is time consuming
+                # tile_ith.rio.to_raster(file_ith)
 
             assert tile_vx.rio.bounds() == tile_vy.rio.bounds() == tile_ith.rio.bounds(), 'Different bounds found.'
             assert tile_vx.rio.crs == tile_vy.rio.crs == tile_vy.rio.crs, 'Different crs found.'
@@ -1073,11 +1068,11 @@ def populate_glacier_with_metadata(glacier_name,
         print(f"Num groups in Millan: {groups.ngroups}") if verbose else None
 
         for g_value, df_group in groups:
-            print(f"Group: {g_value} {len(df_group)} points")
+            print(f"Group: {g_value} {len(df_group)} points") if verbose else None
             unique_vx_tiles = df_group.iloc[:, 2:2 + (ncols - 2) // 2].columns[df_group.iloc[:, 2:2 + (ncols - 2) // 2].sum() != 0].tolist()
             unique_ith_tiles = df_group.iloc[:, 2 + (ncols - 2) // 2:].columns[df_group.iloc[:, 2 + (ncols - 2) // 2:].sum() != 0].tolist()
 
-            group_lats, group_lons = df_group['lats'], df_group['lons']
+            group_lats, group_lons = df_group['lats'].values, df_group['lons'].values
             #print(unique_vx_tiles)
 
             for file_vx, file_ith in zip(unique_vx_tiles, unique_ith_tiles):
@@ -1096,7 +1091,7 @@ def populate_glacier_with_metadata(glacier_name,
                 if not tile_vx.rio.bounds() == tile_vy.rio.bounds() == tile_ith.rio.bounds():
                     tile_ith = tile_ith.reindex_like(tile_vx, method="nearest", tolerance=50., fill_value=np.nan)
 
-                assert tile_vx.rio.crs == tile_vy.rio.crs == tile_vy.rio.crs, 'Different crs found.'
+                assert tile_vx.rio.crs == tile_vy.rio.crs == tile_ith.rio.crs, 'Different crs found.'
                 assert tile_vx.rio.bounds() == tile_vy.rio.bounds() == tile_ith.rio.bounds(), 'Different bounds found.'
 
                 group_eastings, group_northings = Transformer.from_crs("EPSG:4326", tile_vx.rio.crs).transform(group_lats,
@@ -1298,7 +1293,7 @@ def populate_glacier_with_metadata(glacier_name,
             print(", ".join([f"{col}: {points_df[col].isna().sum()}" for col in cols_millan]))
 
         if points_df['ith_m'].isna().all():
-            print(f"No Millan ith data can be found for rgi {rgi} glacier {glacier_name} at {cenLat} lat {cenLon} lon.")
+            print(f"No Millan ith data can be found for rgi {rgi} glacier {glacier_name} at {cenLat} lat {cenLon} lon.") if verbose else None
 
         return points_df
 
@@ -1334,7 +1329,7 @@ def populate_glacier_with_metadata(glacier_name,
                             miny=swlat - (deltalat + eps),
                             maxx=nelon + (deltalon + eps),
                             maxy=nelat + (deltalat + eps),
-                             rgi=rgi, path_tandemx=args.mosaic)
+                             rgi=rgi, path_tandemx=config.tandemx_dir)
     t1_load_dem = time.time()
     print(f"Time to load dem and create mosaic: {t1_load_dem-t0_load_dem}") if verbose else None
 
@@ -1344,8 +1339,7 @@ def populate_glacier_with_metadata(glacier_name,
     # Reproject to utm (projection distortions along boundaries converted to nans)
     # Default resampling is nearest which leads to weird artifacts. Options are bilinear (long) and cubic (very long)
     t0_reproj_dem = time.time()
-    focus_utm = focus.rio.reproject(glacier_epsg, resampling=rasterio.enums.Resampling.bilinear, nodata=np.nan)#nodata=-9999
-    #focus_utm = focus_utm.where(focus_utm != -9999, np.nan) #todo: is this even necessary ?
+    focus_utm = focus.rio.reproject(glacier_epsg, resampling=rasterio.enums.Resampling.bilinear, nodata=np.nan)
     t1_reproj_dem = time.time()
     print(f"Time to reproject dem: {t1_reproj_dem - t0_reproj_dem}") if verbose else None
 
@@ -1555,6 +1549,18 @@ def populate_glacier_with_metadata(glacier_name,
     curv_50 = xrspatial.curvature(focus_filter_xarray_50_utm)
     curv_300 = xrspatial.curvature(focus_filter_xarray_300_utm)
     curv_af = xrspatial.curvature(focus_filter_xarray_af_utm)
+    # todo: aspect calculate using DEM instead of importing from OGGM ?
+    #ttest0 = time.time()
+    #aspect_rad = np.arctan2(dz_dlat_np_50, dz_dlon_np_50)
+    #aspect_deg = np.degrees(aspect_rad)
+    #aspect_deg = (aspect_deg + 360) % 360
+    #flat_areas = (dz_dlat_np_50 == 0) & (dz_dlon_np_50 == 0)
+    #aspect_deg[flat_areas] = np.nan
+    #mean_aspect = np.nanmean(aspect_deg)
+    #ttest1 = time.time()
+    #print(gl_df['Aspect'].item(), mean_aspect, ttest1-ttest0)
+    #input('wait')
+
     #aspect_50 = xrspatial.aspect(focus_filter_xarray_50_utm)
     #aspect_300 = xrspatial.aspect(focus_filter_xarray_300_utm)
     #aspect_af = xrspatial.aspect(focus_filter_xarray_af_utm)
@@ -1605,7 +1611,7 @@ def populate_glacier_with_metadata(glacier_name,
         glacier_dmdtda = mbdf_rgi.at[glacier_name, 'dmdtda']
     except: # impute the mean
         glacier_dmdtda = mbdf_rgi['dmdtda'].median()
-    print(f'Hugonnet mb: {glacier_dmdtda} m w.e/yr')
+    print(f'Hugonnet mb: {glacier_dmdtda} m w.e/yr') if verbose else None
 
 
     # check if any nan in the interpolate data
@@ -1736,13 +1742,13 @@ def populate_glacier_with_metadata(glacier_name,
     tsmb0 = time.time()
 
     if rgi in [5,19]:
-        print("Mass balance with racmo")
+        print("Mass balance with racmo") if verbose else None
         # Surface mass balance with racmo
-        path_RACMO_folder = f"{args.RACMO_folder}"
+        path_RACMO_folder = config.racmo_dir
         if rgi==5:
-            racmo_file = "/greenland_racmo2.3p2/smb_greenland_mean_1961_1990_RACMO23p2_gf.nc"
+            racmo_file = "greenland_racmo2.3p2/smb_greenland_mean_1961_1990_RACMO23p2_gf.nc"
         elif rgi==19:
-            racmo_file = "/antarctica_racmo2.3p2/2km/smb_antarctica_mean_1979_2021_RACMO23p2_gf.nc"
+            racmo_file = "antarctica_racmo2.3p2/2km/smb_antarctica_mean_1979_2021_RACMO23p2_gf.nc"
         else: raise ValueError('rgi value for RACMO smb calculation not recognized')
 
         racmo = rioxarray.open_rasterio(f'{path_RACMO_folder}{racmo_file}')
@@ -1778,7 +1784,7 @@ def populate_glacier_with_metadata(glacier_name,
             plt.show()
 
     else:
-        print("Using Hugonnet-elevation relation")
+        print("Using Hugonnet-elevation relation") if verbose else None
         # Surface mass balance with my method in all other regions (BAD METHOD)
         #smb_data = []
         #for (lat, lon, elev) in zip(points_df['lats'], points_df['lons'], elevation_data):
@@ -1814,11 +1820,31 @@ def populate_glacier_with_metadata(glacier_name,
 
     points_df['t2m'] = np.nan
 
-    tile_era5_t2m = rioxarray.open_rasterio(f"{args.path_ERA5_t2m_folder}era5land_era5.nc", masked=False)
+    tile_era5_t2m = rioxarray.open_rasterio(f"{config.ERA5_t2m_dir}era5land_era5.nc", masked=False)
     tile_era5_t2m = tile_era5_t2m.squeeze()
 
-    t2m_data = tile_era5_t2m.interp(y=xarray.DataArray(points_df['lats']),
-                                    x=xarray.DataArray(points_df['lons']), method="linear").data
+    #fig, ax = plt.subplots()
+    #tile_era5_t2m.plot(ax=ax)
+    #ax.scatter(x=points_df['lons'], y=points_df['lats'])
+    #plt.show()
+
+    try:
+        t2m_data = tile_era5_t2m.interp(y=xarray.DataArray(points_df['lats']),
+                                        x=xarray.DataArray(points_df['lons']), method="linear").data
+
+        # Check if there are any NaNs in the interpolated data
+        if np.isnan(t2m_data).any():
+            raise ValueError("NaN values detected after linear interpolation in temperature")
+
+    # For glaciers close to the lon=-180 border the interpolation fails. Lets redefine the coordinates
+    # Triggered in RGI60-10.05038
+    except ValueError:
+        # If NaNs are detected, perform interpolation with adjusted longitudes
+        tile_era5_t2m_adjusted = tile_era5_t2m.assign_coords(x=((tile_era5_t2m['x'] + 360) % 360))
+        points_df['lons_adjusted'] = (points_df['lons'] + 360) % 360
+
+        t2m_data = tile_era5_t2m_adjusted.interp(y=xarray.DataArray(points_df['lats']),
+                                                 x=xarray.DataArray(points_df['lons_adjusted']), method="linear").data
 
     points_df['t2m'] = t2m_data
 
@@ -1837,7 +1863,7 @@ def populate_glacier_with_metadata(glacier_name,
 
     points_df['ith_f'] = np.nan
 
-    folder_rgi_farinotti = f"{args.farinotti_icethickness_folder}RGI60-{rgi:02d}/"
+    folder_rgi_farinotti = f"{config.farinotti_icethickness_dir}RGI60-{rgi:02d}/"
     try: # Import farinotti ice thickness file. Note that it contains zero where ice not present.
         file_glacier_farinotti =rioxarray.open_rasterio(f'{folder_rgi_farinotti}{glacier_name}_thickness.tif', masked=False)
         file_glacier_farinotti = file_glacier_farinotti.where(file_glacier_farinotti != 0.0) # replace zeros with nans.
@@ -1901,7 +1927,7 @@ def populate_glacier_with_metadata(glacier_name,
     list_cluster_RGIIds = find_cluster_with_graph(rgi_graph, glacier_name, max_depth=graph_max_layer_depth)
     no_glaciers_in_cluster = len(list_cluster_RGIIds)
 
-    print(f"Cluster: {no_glaciers_in_cluster} glaciers created in: {time.time()-tdist0:.3f}")
+    print(f"Cluster: {no_glaciers_in_cluster} glaciers created in: {time.time()-tdist0:.3f}") if verbose else None
 
     # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks) and convert to UTM
     tgeoms0 = time.time()
@@ -1915,7 +1941,7 @@ def populate_glacier_with_metadata(glacier_name,
     try:
         cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='coverage'), crs="EPSG:4326")
     except GEOSException as e:
-        print(f"Coverage method failed: {e} Falling back to unary method.")
+        print(f"Coverage method failed: {e} Falling back to unary method.") if verbose else None
         cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'), crs="EPSG:4326")
     cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
     if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
@@ -1946,19 +1972,15 @@ def populate_glacier_with_metadata(glacier_name,
         points_coords_array = np.column_stack((eastings, northings)) #(10000,2)
 
         # Extract all coordinates from the GeoSeries geometries
-        #todo: why is this for rgi 5, 19?
-        #if (rgi in (5,19) and len(geoseries_geometries_epsg)>1):
-            #geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg[1:].geometry])
-        #else:
         geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
 
         # it appears that when no. geometries is low pykdtree_kdtree is faster, else sklearn KDTree is faster.
         if no_geometries_in_cluster > 2000:
             kdtree = sklearn.neighbors.KDTree(geoms_coords_array)
-            print('using sklearn.neighbors.KDTree')
+            print('using sklearn.neighbors.KDTree') if verbose else None
         else:
             kdtree = pykdtree.kdtree.KDTree(geoms_coords_array)
-            print('using pykdtree.kdtree.KDTree')
+            print('using pykdtree.kdtree.KDTree') if verbose else None
 
         # Perform nearest neighbor search for each point and calculate minimum distances
         # k can be decreased for speedup to, e.g. k=200. I suspect that k can be somehow as low as 200, and in such
@@ -1991,7 +2013,7 @@ def populate_glacier_with_metadata(glacier_name,
         plt.tight_layout()
         plt.show()
 
-    # Method 3: geopandas spatial indexes (bad method and slow)
+    # Method 2: geopandas spatial indexes (bad method and slow)
     run_method_geopandas_index = False
     if run_method_geopandas_index:
         min_distances = []
@@ -2018,7 +2040,7 @@ def populate_glacier_with_metadata(glacier_name,
         min_distances = np.array(min_distances)
         min_distances /= 1000.  # km
         td2 = time.time()
-        print(f"Distances using pandas distance and multicpu {td2 - td1}")
+        print(f"Distances using pandas distance and multicpu {td2 - td1}") if verbose else None
 
     # Method 4: not verctorized version (exact method but very slow)
     run_method_not_vectorized = False
@@ -2028,7 +2050,7 @@ def populate_glacier_with_metadata(glacier_name,
             # Make a check.
             easting, nothing, zonenum, zonelett, epsg = from_lat_lon_to_utm_and_epsg(lat, lon)
             if epsg != glacier_epsg:
-                print(f"Note differet UTM zones. Point espg {epsg} and glacier center epsg {glacier_epsg}.")
+                print(f"Note differet UTM zones. Point espg {epsg} and glacier center epsg {glacier_epsg}.") if verbose else None
 
             # Get shapely Point
             point_epsg = geoseries_points_epsg.iloc[i]
@@ -2261,7 +2283,7 @@ def populate_glacier_with_metadata(glacier_name,
 
     # 1. First level velocity imputation: glacier median
     if partial_velocity_missing and not complete_velocity_missing:
-        print(f"Some or no velocity data missing. Nans found in v50: {points_df['v50'].isna().sum()}. Progressive imputation.")
+        print(f"Some or no velocity data missing. Nans found in v50: {points_df['v50'].isna().sum()}. Progressive imputation.") if verbose else None
 
         v50_before_knn = points_df['v50']
 
@@ -2287,7 +2309,7 @@ def populate_glacier_with_metadata(glacier_name,
     # 2. Second level velocity imputation: regional median
     elif complete_velocity_missing and partial_velocity_missing:
         print(f"No velocity data can be found for rgi {rgi} glacier {glacier_name} "
-              f"at {cenLat} lat {cenLon} lon. Regional data imputation.")
+              f"at {cenLat} lat {cenLon} lon. Regional data imputation.") if verbose else None
 
         rgi_median_velocities = velocity_median_rgi(rgi=rgi) # 6-vector
         points_df[list_vel_cols_for_imputation] = rgi_median_velocities
@@ -2365,7 +2387,6 @@ if __name__ == "__main__":
     # ultra weird: RGI60-02.03411 millan has ith but no ice velocity
     # 'RGI60-05.10315' #RGI60-09.00909
 
-    #dem_rgi = fetch_dem(folder_mosaic=args.mosaic, rgi=rgi)
     generated_points_dataframe = populate_glacier_with_metadata(
                                             glacier_name=glacier_name,
                                             n=30000,
