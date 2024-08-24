@@ -24,7 +24,7 @@ import optuna
 import shap
 from fetch_glacier_metadata import populate_glacier_with_metadata, get_rgi_products, get_coastline_dataframe
 from create_rgi_mosaic_tanxedem import create_glacier_tile_dem_mosaic
-from utils_metadata import (calc_volume_glacier, get_random_glacier_rgiid, create_train_test, load_models, create_PIL_image)
+from utils_metadata import *
 import misc as misc
 from joblib import Parallel, delayed
 
@@ -58,7 +58,7 @@ run_deploy_from_csv_list = True
 if run_deploy_from_csv_list:
     for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
-        glacier_name_for_generation = 'RGI60-03.02469' #'RGI60-01.13696'# 'RGI60-11.01450' #'RGI60-13.33257' #overwrite #'RGI60-01.13696'
+        glacier_name_for_generation = 'RGI60-04.06187' #'RGI60-01.13696'# 'RGI60-11.01450' #'RGI60-13.33257' #overwrite #'RGI60-01.13696'
 
         print(n, glacier_name_for_generation)
         #if f"{glacier_name_for_generation}.png" in os.listdir(f"{config.model_output_results_dir}"):
@@ -79,6 +79,7 @@ if run_deploy_from_csv_list:
         h_wgs84 = test_glacier['elevation'].to_numpy()
         lats = test_glacier['lats'].to_numpy()
         lons = test_glacier['lons'].to_numpy()
+        h_egm2008 = calc_geoid_heights(lons=lons, lats=lats, h_wgs84=h_wgs84)
 
         # Begin to extract all necessary things to plot the result
         oggm_rgi_shp = glob(f"{config.oggm_dir}rgi/RGIV62/{test_glacier_rgi}*/{test_glacier_rgi}*.shp")[0]
@@ -123,7 +124,8 @@ if run_deploy_from_csv_list:
         y_preds_glacier = np.where(y_preds_glacier < 0, 0, y_preds_glacier)
 
         # Calculate the glacier volume using the 3 models
-        vol_ML, err_vol_ML = calc_volume_glacier(y1=y_preds_glacier_xgb, y2=y_preds_glacier_cat, area=glacier_area)
+        vol_ML, err_vol_ML, _ = calc_volume_glacier(y1=y_preds_glacier_xgb, y2=y_preds_glacier_cat,
+                                                 area=glacier_area, h_egm2008=h_egm2008)
         vol_millan = calc_volume_glacier(y1=y_test_glacier_m, area=glacier_area)
         vol_farinotti = calc_volume_glacier(y1=y_test_glacier_f, area=glacier_area)
         print(f"Glacier {glacier_name_for_generation} Area: {glacier_area:.2f} km2, "
@@ -317,6 +319,7 @@ def run_rgi_simulation(rgi=None):
         h_wgs84 = glacier_data['elevation'].to_numpy()
         lats = glacier_data['lats'].to_numpy()
         lons = glacier_data['lons'].to_numpy()
+        h_egm2008 = calc_geoid_heights(lons=lons, lats=lats, h_wgs84=h_wgs84)
 
         # 2. run model
         X_test_glacier = glacier_data[config.features]
@@ -335,7 +338,8 @@ def run_rgi_simulation(rgi=None):
         y_preds_glacier = np.where(y_preds_glacier < 0, 0, y_preds_glacier)
 
         # 3. calculate volumes
-        vol_ML, err_vol_ML = calc_volume_glacier(y1=y_preds_glacier_xgb, y2=y_preds_glacier_cat, area=glacier_area)
+        vol_iceboost, err_vol_iceboost, vol_iceboost_bsl = calc_volume_glacier(y1=y_preds_glacier_xgb, y2=y_preds_glacier_cat,
+                                                 area=glacier_area, h_egm2008=h_egm2008)
         vol_millan = calc_volume_glacier(y1=y_test_glacier_m, area=glacier_area)
         vol_farinotti = calc_volume_glacier(y1=y_test_glacier_f, area=glacier_area)
 
@@ -345,31 +349,41 @@ def run_rgi_simulation(rgi=None):
         dx, dy = x1 - x0, y1 - y0
 
         interpolator = NearestNDInterpolator(np.column_stack((lons, lats)), y_preds_glacier)
-        tif_resolution = 3./3600
-        n_bins_lon = max(10, int(dx / tif_resolution))
-        n_bins_lat = max(10, int(dy / tif_resolution))
-        #print(n_bins_lon, n_bins_lat)
+        tif_resolution = 2./3600
 
-        lon_grid, lat_grid = np.meshgrid(np.linspace(x0, x1, n_bins_lon), np.linspace(y0, y1, n_bins_lat))
+        xmin, xmax = tif_resolution * np.floor(x0/tif_resolution), tif_resolution * np.ceil(x1/tif_resolution)
+        ymin, ymax = tif_resolution * np.floor(y0/tif_resolution), tif_resolution * np.ceil(y1/tif_resolution)
+
+        lon_range = np.arange(xmin, xmax + tif_resolution, tif_resolution)
+        lat_range = np.arange(ymin, ymax + tif_resolution, tif_resolution)
+
+        lon_grid, lat_grid = np.meshgrid(lon_range, lat_range)
         thickness_grid = interpolator(lon_grid, lat_grid)
 
         assert not np.isnan(thickness_grid).any(), f'Thickness with some nans: glacier {gl_id}'
 
         data_array = xarray.DataArray(
             thickness_grid,
-            coords=[('y', lat_grid[:, 0]), ('x', lon_grid[0, :])],
+            coords=[('y', lat_range), ('x', lon_range)],
             name='thickness'
         ).rio.write_crs("EPSG:4326", inplace=True).rio.set_nodata(np.nan, inplace=True)
+
         data_array = data_array.rio.clip(geometries=[glacier_geometry], crs="EPSG:4326", drop=False, invert=False,
-                                         all_touched=False)
+                                         all_touched=True)
+
+        # enforce precise resolution
+        data_array = data_array.rio.reproject(dst_crs=data_array.rio.crs, resolution=tif_resolution)
+
+        assert data_array.rio.resolution()[0] == tif_resolution, 'Created array with unexpected resolution.'
 
         # add attributes
         data_array.attrs['id'] = gl_id
         data_array.attrs['name'] = glacier_name
         data_array.attrs['lat'] = lats.mean()
         data_array.attrs['lon'] = lons.mean()
-        data_array.attrs['volume'] = vol_ML
-        data_array.attrs['err'] = err_vol_ML
+        data_array.attrs['volume'] = vol_iceboost
+        data_array.attrs['err'] = err_vol_iceboost
+        data_array.attrs['volume_bsl'] = vol_iceboost_bsl
         data_array.attrs['volume_millan'] = vol_millan
         data_array.attrs['volume_farinotti'] = vol_farinotti
         data_array.attrs['thickness_units'] = 'm'
@@ -379,18 +393,13 @@ def run_rgi_simulation(rgi=None):
         #data_array.plot(cmap='jet')
         #plt.show()
 
-        # create PIL image for .png
-        #imagePIL = create_PIL_image(data_array.values, png_resolution=200)
-
-        # 5. save .png and .tif
+        # 5. save .tif
         PATH_OUT = config.model_output_global_deploy_dir
         file_out_tif = f'{PATH_OUT}rgi{rgi}/{gl_id}.tif'
-        file_out_png = f'{PATH_OUT}rgi{rgi}/{gl_id}.png'
-        #imagePIL.save(file_out_png)
-        #data_array.rio.to_raster(file_out_tif, compress="deflate")
+        data_array.rio.to_raster(file_out_tif, compress="deflate")
 
 
-    multicpu = False
+    multicpu = True
     if multicpu:
         Parallel(n_jobs=8, timeout=300)(delayed(process_glacier)(gl_id) for gl_id in tqdm(oggm_rgi_glaciers['RGIId'],
                                                                                     desc=f"rgi {rgi} glaciers",
@@ -403,4 +412,4 @@ def run_rgi_simulation(rgi=None):
 
 run_rgi_simulation_YN = False
 if run_rgi_simulation_YN:
-    run_rgi_simulation(rgi=11)
+    run_rgi_simulation(rgi=4)
