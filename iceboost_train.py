@@ -22,7 +22,7 @@ import xgboost as xgb
 import catboost as cb
 import optuna
 import shap
-from fetch_glacier_metadata import populate_glacier_with_metadata
+from fetch_glacier_metadata import populate_glacier_with_metadata, get_oggm_rgi_products
 from create_rgi_mosaic_tanxedem import create_glacier_tile_dem_mosaic
 from utils_metadata import calc_volume_glacier, get_random_glacier_rgiid, create_train_test, get_cmap
 
@@ -584,9 +584,15 @@ glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-03.01517', rg
 # check if RGI60-06.00475 and RGI60-06.00481 blend together
 
 # Generate points for one glacier
-test_glacier = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation,
-                                              n=CFG.n_points_regression, seed=42, verbose=True)
 test_glacier_rgi = glacier_name_for_generation[6:8]
+oggm_rgi_products = get_oggm_rgi_products(test_glacier_rgi)
+test_glacier = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation,
+                                              n=CFG.n_points_regression,
+                                              k_max_geoms=config.kdtree_dist_max_k_geometries,
+                                              oggm_rgi_products=oggm_rgi_products,
+                                              seed=42,
+                                              verbose=True)
+
 
 #fig, (ax1, ax2, ax3) = plt.subplots(1,3)
 #s = ax1.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=1, c=test_glacier['dist_from_border_km_geom'])
@@ -855,20 +861,3 @@ for ax in (ax1, ax2, ax3):
 fig.suptitle(f'{glacier_name_for_generation}', fontsize=13)
 plt.tight_layout()
 plt.show()
-
-####################################
-# Regional simulation
-def run_rgi_simulation(rgi):
-    print("Begin regional simulation ")
-    oggm_rgi_shp = utils.get_rgi_region_file(f"{rgi:02d}", version='62')
-    # Get glaciers and order them in decreasing order by Area. First glaciers will be bigger and slower to process.
-    oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio').sort_values(by='Area', ascending=False)
-    # Main loop over glaciers
-    for i, gl_id in tqdm(enumerate(oggm_rgi_glaciers['RGIId']), total=len(oggm_rgi_glaciers), desc=f"rgi {rgi} Glaciers", leave=True):
-        # Fetch glacier data
-        glacier_data = populate_glacier_with_metadata(glacier_name=gl_id, n=CFG.n_points_regression, seed=None, verbose=True)
-    print(f"Finished regional simulation for rgi {rgi}.")
-
-run_rgi_simulation_YN = False
-if run_rgi_simulation_YN:
-    run_rgi_simulation(11)
