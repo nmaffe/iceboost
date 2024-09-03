@@ -204,6 +204,15 @@ of all features into a 100x100 grid mesh. The code produces the final ~300.0 MB 
 ## Train model ensemble 🤖
 
 ---
+To train the model, run:
+```
+python iceboost_train.py
+```
+This code trains a xgboost and catboost regression models. The trained models can be saved respectively 
+as ```.json``` and ```.cbm``` files.
+
+The code also contains a module to perform inference on a glacier, by specifying its RGI code.
+
 
 ## Model inference 🔮
 
