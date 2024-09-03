@@ -12,7 +12,7 @@ to model the ice thickness of the World's glaciers
 #### 1. Setup OGGM
 Install [OGGM](https://oggm.org/). ICEBOOST uses OGGM's glacier geometries, v62. They are a slight revision-improvement 
 of the official, RGI v6 repository, with some additional glaciers added as well.
-Once installed, specify its location in the ``` config/config.yaml``` file,
+Once installed, specify its location in the ```config/config.yaml``` file,
 under the ```oggm_dir``` argument.
 
 
@@ -109,7 +109,7 @@ From NSIDC download the ```antarctic_ice_vel_phase_map_v01.nc``` file
 and place it in ```Antarctica_NSIDC/velocity/NSIDC-0754/```. 
 
 
-Specify the location of these folders in the ``` config/config.yaml``` file, under the arguments:
+Specify the location of these folders in the ```config/config.yaml``` file, under the arguments:
 ```millan_velocity_dir```, ```NSIDC_velocity_Greenland_dir```, and ```NSIDC_velocity_Antarctica_dir```.
 
 #### 5. Prepare the world's coastlines product
@@ -131,7 +131,7 @@ gdf6 = gpd.read_file('/YOUR_IN_PATH/GSHHS_f_L6.shp', engine='pyogrio')
 gdf16 = pd.concat([gdf1, gdf6], ignore_index=True)
 gdf16.to_file('/YOUR_OUT_PATH/GSHHS_f_L1_L6.shp', driver='ESRI Shapefile')
 ```
-Place the generated ```GSHHS_f_L1_L6.shp``` file in a folder specified in ``` config/config.yaml``` file, 
+Place the generated ```GSHHS_f_L1_L6.shp``` file in a folder specified in ```config/config.yaml``` file, 
 under the argument ```coastlines_gshhg_dir/```.
 
 #### 6. Prepare the RACMO surface mass balance product
@@ -155,7 +155,7 @@ racmo/
 ├── antarctica_racmo2.3p2/smb_antarctica_mean_1979_2021_RACMO23p2_gf.nc
 └── greenland_racmo2.3p2/smb_greenland_mean_1961_1990_RACMO23p2_gf.nc
 ```
-In ``` config/config.yaml``` file, specify the location of the racmo root folder under the argument ```racmo_dir/```.
+In ```config/config.yaml``` file, specify the location of the racmo root folder under the argument ```racmo_dir/```.
 
 #### 7. Prepare all other models' ice thickness solutions for comparisons
 ICEBOOST code uses the following products of ice thickness distributions for comparisons:
@@ -173,7 +173,7 @@ From NSIDC download ```BedMachineAntarctica-v3.nc``` and place it in ```Antarcti
 From [Farinotti et al. (2019)](https://www.research-collection.ethz.ch/handle/20.500.11850/315707), download 
 the ```composite_thickness_RGI60-all_regions.zip``` archive and extract its content in a folder ```Farinotti/```.
 
-Finally, in ``` config/config.yaml```, specify the locations of the following folders: ```millan_icethickness_dir```,
+Finally, in ```config/config.yaml```, specify the locations of the following folders: ```millan_icethickness_dir```,
 ```NSIDC_icethickness_Greenland_dir```, ```NSIDC_icethickness_Antarctica_dir```, ```farinotti_icethickness_dir```.
 
 #### 8. Prepare ground truth dataset
@@ -217,11 +217,18 @@ The code also contains a module to perform inference on a glacier, by specifying
 ## Model inference 🔮
 
 ---
+If you don't want to train the model but just run it, you can get the trained modules (```.json``` and ```.cbm```) from [Zenodo](https://zenodo.org/records/13145836),
+specify their names and location in the ```config/config.yaml```, under ```model_input_dir/```, ```model_filename_xgb```,
+```model_filename_cat```
+and run:
 ```
 python iceboost_deploy.py
 ```
-This piece of code loads the two trained modules and performs model deploy on either one single glacier,
-a list of glaciers, or a regional simulation of all glaciers. 
+The code loads the two trained modules and performs model deploy on either one single glacier,
+a list of glaciers, or on all glaciers regionally. Under the hood, the code runs ```fetch_glacier_metadata.py```, which
+generates the array features on-the-fly.
+
+In ```config/config.yaml``` you can also specify the number of points you want to generate: ```generate n_points_regression```.
 
 ## Acknowledgments
 
