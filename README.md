@@ -2,29 +2,53 @@
     <img alt="Logo" src="img/logo_iceboost.svg" style="width: 100%; height: auto;" />
 </div>
 
-🚧🚧 UNDER CONSTRUCTION 🚧🚧
-
-# ICEBOOST
 
 a Gradient-Boosted Tree framework 
 to model the ice thickness of the World's glaciers
 
-#### Prepare the Tandem-X EDEM tiles
+---
+### Prepare model inputs
+Specify the location of the following inputs in the ``` config/config.yaml``` file.
+
+#### 1. Tandem-X EDEM tiles
 The model needs a Digital Elevation Model. We use Tandem-X EDEM. To automatically download 
-all but only the necessary tiles that contain glaciers, run the following script.
+all but only the necessary tiles that contain glaciers. Ensure that you have enough storage space (~600.0 GB).
+
+- Run the following:
 ```
 python produce_txtfile_tandemx_rgi_tile_urls --rgi 
 ```
-The script produces .txt files containing the url links pointing to the Tandem-X zip tiles, for each region.
+The script generates .txt file containing the url links pointing to the Tandem-X tiles (as .zip files), for region ```--rgi```.
 Adjust the ```--save``` and ```--outfolder``` options to specify where to save the txt file.
-Specify the region from 1 to 19 using the ```--rgi``` argument. The tiles are chosen such that they 
-contain RGI v.6 glaciers with a buffer of 1/8 degree. You can increase this option as well.
 
-Afterwards, run the following to download the tiles from https://download.geoservice.dlr.de:
+- Run the code using the ```--rgi``` argument from 1 to 19 to generate the 19 txt files. The tiles are chosen such 
+that they contain all RGI v.6 glaciers with a buffer of 1/8 degree. You can increase this option as well.
+
+Once you have all ```.txt``` files, setup a [DLR account at the EOWEB Geoportal](https://eoweb.dlr.de/egp/). 
+
+Now, create a structure of empty folders like the following. The path of the root folder Tandem-X-EDEM should 
+be specified  in the ```config.yaml``` file, under the ```tandemx_dir``` argument.
+The directory structure should be organized with 19 subdirectories as follows:
+```
+Tandem-X-EDEM/
+├── RGI_01/
+├── RGI_02/
+├── RGI_03/
+├── ...
+└── RGI_19/
+```
+
+Place the txt files inside the respective folders. 
+- Run the following to download 
+all the tiles specified in the txt files:
 
 ```xargs -a TDM30_EDEM-url-list.txt -L1 curl -O -u 'usr:pass'```
 
-#### Prepare ERA-5 temperature
+Repeat for all 19 txt files. 
+Great. You should have all zip tiles in all folders. 
+Now the last step is unpacking them.
+
+### 2. Prepare ERA-5 temperature
 The model needs a temperature field over glaciers. We use t2m from ERA5-Land and ERA5 merged together 
 and averaged over 2000-2010. Download these 2 products from Copernicus and run the following while specifying the input 
 and output paths: 
@@ -39,21 +63,21 @@ ICEBOOST uses surface ice velocity from [Millan et al. (2022)](https://www.sedoo
 and [Mouginot et al. 2019 (Antarctica, prod. NSIDC-0754)](https://nsidc.org/data/nsidc-0754/versions/1). 
 Download all these products. Put Millan's rgi-1-2 tiles in the same folder. Similarly, rgi-13-14-15 tiles together. 
 
-#### Prepare the world's coastlines product
+#### 3. Prepare the world's coastlines product
 
-#### Create the training dataset 🏋️
-
----
-
-#### Process training dataset and downscale 🏋️
+### Create the training dataset 🏋️
 
 ---
 
-#### Train model ensemble 🤖
+### Process training dataset and downscale 🏋️
 
 ---
 
-#### Model inference 🔮
+### Train model ensemble 🤖
+
+---
+
+### Model inference 🔮
 
 ---
 
