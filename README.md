@@ -206,7 +206,7 @@ To train the model, run:
 python iceboost_train.py
 ```
 This code trains a xgboost and catboost regression models. The trained models can be saved respectively 
-as ```.json``` and ```.cbm``` files.
+as ```.json``` and ```.cbm``` files. These have been deposited on [Zenodo](https://zenodo.org/records/13145836).
 
 The code also contains a module to perform inference on a glacier, by specifying its RGI code.
 
