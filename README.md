@@ -48,22 +48,30 @@ Repeat for all 19 txt files.
 Great. You should have all zip tiles in all folders. 
 Now the last step is unpacking them.
 
-### 2. Prepare ERA-5 temperature
-The model needs a temperature field over glaciers. We use t2m from ERA5-Land and ERA5 merged together 
-and averaged over 2000-2010. Download these 2 products from Copernicus and run the following while specifying the input 
-and output paths: 
+#### 2. Prepare ERA-5 temperature
+The model needs a temperature field over all glaciers. We use t2m from ERA5-Land and ERA5 merged together 
+and averaged over 2000-2010. 
+Download these 2 products from the [Copernicus Climate Change Service C3S Climate Date Store](https://cds.climate.copernicus.eu/cdsapp#!/home) 
+from 2000 to 2010 at monthly resolution.
+
+- Run the following while specifying the input and output paths: 
 ```
 python create_ERA5_T2m.py --ERA5Land_folder --ERA5_folder --ERA5_outfolder 
 ```
-to produce a 50 MB ```era5land_era5.nc``` file that will be needed.
+The ```--ERA5Land_folder``` and ```--ERA5_folder``` arguments should point to the folders containing 
+the downloaded ```ERA5-land``` and ```ERA5``` t2m products, while ```--ERA5_outfolder``` points the 
+destination folder for the generated file.
 
-#### Prepare the ice velocity products
+In the code, set ```save=True``` to save the generated ```era5land_era5.nc``` temperature field.
+
+#### 3. Prepare the ice velocity products
 ICEBOOST uses surface ice velocity from [Millan et al. (2022)](https://www.sedoo.fr/theia-publication-products/?uuid=55acbdd5-3982-4eac-89b2-46703557938c), 
 [Joughin et al. 2016 (Greenland, prod. NSIDC-0670)](https://nsidc.org/data/nsidc-0670/versions/1),
 and [Mouginot et al. 2019 (Antarctica, prod. NSIDC-0754)](https://nsidc.org/data/nsidc-0754/versions/1). 
-Download all these products. Put Millan's rgi-1-2 tiles in the same folder. Similarly, rgi-13-14-15 tiles together. 
-
-#### 3. Prepare the world's coastlines product
+Download these products and specify the folders in the ``` config/config.yaml``` file. 
+Put Millan's rgi-1-2 tiles in the same folder. Similarly, rgi-13-14-15 tiles together. 
+- - 
+#### 4. Prepare the world's coastlines product
 
 ### Create the training dataset 🏋️
 
