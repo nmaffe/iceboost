@@ -17,7 +17,8 @@ under the ```oggm_dir``` argument.
 
 
 #### 2. Tandem-X EDEM tiles
-The model needs a Digital Elevation Model. We use Tandem-X EDEM. Ensure that you have enough storage space (~600.0 GB).
+The model needs a Digital Elevation Model. We use [Tandem-X EDEM](https://geoservice.dlr.de/web/dataguide/tdm30/). 
+Ensure that you have enough storage space (~600.0 GB).
 To automatically download all but only the necessary tiles that contain glaciers,
 - Run the following:
 ```
