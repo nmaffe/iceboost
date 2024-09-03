@@ -122,12 +122,33 @@ gdf6 = gpd.read_file('/YOUR_IN_PATH/GSHHS_f_L6.shp', engine='pyogrio')
 gdf16 = pd.concat([gdf1, gdf6], ignore_index=True)
 gdf16.to_file('/YOUR_OUT_PATH/GSHHS_f_L1_L6.shp', driver='ESRI Shapefile')
 ```
-Place the ```GSHHS_f_L1_L6.shp``` file in a folder specified in ``` config/config.yaml``` file, 
+Place the generated ```GSHHS_f_L1_L6.shp``` file in a folder specified in ``` config/config.yaml``` file, 
 under the argument ```coastlines_gshhg_dir/```.
 
 #### 6. Prepare the RACMO surface mass balance product
+Over Greenland and Antarctica, ICEBOOST uses RACMO mass balance.
+- Greenland: RACMO2.3, Downscaled at 1 km, from [Noël, B., & van Kampenhout, L. (2019)](https://zenodo.org/records/3367211).
+- Antarctica: : RACMO2.3, Downscaled at 2 km, from [Noël, B., et al. (2023)](https://zenodo.org/records/10007855)
 
-#### 7. Prepare all other models' ice thickness solutions
+Greenland:
+1. Download the ```SMB_rec_RACMO2.3p2_1km_1961-1990.nc``` file. 
+2. Run ```python create_racmo_greenland.py```, with ```save=True``` to generate the final 1961-1990 averaged mass 
+balance product: ```smb_greenland_mean_1961_1990_RACMO23p2_gf.nc```
+
+Antarctica: 
+1. Download the ```smb_rec.1979-2021.RACMO2.3p2_ANT27_ERA5-3h.AIS.2km.YY.nc``` file. 
+2. Run ```python create_racmo_antarctica.py```, with ```save=True``` to generate the final 1979-2021 averaged mass 
+balance product: ```smb_antarctica_mean_1979_2021_RACMO23p2_gf.nc```
+
+Setup the following folder structure and place the generated files in the relevant folders:
+```
+racmo/
+├── antarctica_racmo2.3p2/smb_antarctica_mean_1979_2021_RACMO23p2_gf.nc
+└── greenland_racmo2.3p2/smb_greenland_mean_1961_1990_RACMO23p2_gf.nc
+```
+In ``` config/config.yaml``` file, specify the location of the racmo root folder under the argument ```racmo_dir/```.
+
+#### 7. Prepare all other models' ice thickness solutions for comparisons
 
 
 ### Create the training dataset 🏋️
