@@ -216,7 +216,6 @@ The code also contains a module to perform inference on a glacier, by specifying
 
 ## Model inference 🔮
 
----
 If you don't want to train the model but just run it, you can get the trained modules (```.json``` and ```.cbm```) from [Zenodo](https://zenodo.org/records/13145836),
 specify their names and location in the ```config/config.yaml```, under ```model_input_dir/```, ```model_filename_xgb```,
 ```model_filename_cat```
