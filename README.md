@@ -18,9 +18,8 @@ under the ```oggm_dir``` argument.
 
 
 #### 2. Tandem-X EDEM tiles
-The model needs a Digital Elevation Model. We use Tandem-X EDEM. To automatically download 
-all but only the necessary tiles that contain glaciers. Ensure that you have enough storage space (~600.0 GB).
-
+The model needs a Digital Elevation Model. We use Tandem-X EDEM. Ensure that you have enough storage space (~600.0 GB).
+To automatically download all but only the necessary tiles that contain glaciers,
 - Run the following:
 ```
 python produce_txtfile_tandemx_rgi_tile_urls --rgi 
@@ -97,7 +96,6 @@ Greenland_NSIDC
 └── velocity/  
 Antarctica_NSIDC
 └── velocity/  
-
 ```
 
 Note: place Millan et al. (2022) tiles in RGI 1-2 and 13-14-15 together. 
@@ -106,6 +104,30 @@ Specify the location of these folders in the ``` config/config.yaml``` file, und
 ```millan_velocity_dir```, ```NSIDC_velocity_Greenland_dir```, and ```NSIDC_velocity_Antarctica_dir```.
 
 #### 5. Prepare the world's coastlines product
+ICEBOOST uses a global coastline product, obtained from the Global Self-consistent, Hierarchical, High-resolution 
+Geography Database, Version 2.3.7. Download the shoreline polygons product at 'f' (full) resolution from [here](https://www.soest.hawaii.edu/pwessel/gshhg/).
+We only care about land-and-ocean boundaries, therefore we only need the following two files:
+
+- ```GSHHS_f_L1.shp```: boundary between land and ocean, except Antarctica.
+- ```GSHHS_f_L6.shp```: boundary between Antarctica grounding-line and ocean.
+
+Merge these two datasets to generate a final dataset of global coastline product. 
+You can use the following code snippet:
+```
+import pandas as pd
+import geopandas as gpd
+
+gdf1 = gpd.read_file('/YOUR_IN_PATH/GSHHS_f_L1.shp', engine='pyogrio')
+gdf6 = gpd.read_file('/YOUR_IN_PATH/GSHHS_f_L6.shp', engine='pyogrio')
+gdf16 = pd.concat([gdf1, gdf6], ignore_index=True)
+gdf16.to_file('/YOUR_OUT_PATH/GSHHS_f_L1_L6.shp', driver='ESRI Shapefile')
+```
+Place the ```GSHHS_f_L1_L6.shp``` file in a folder specified in ``` config/config.yaml``` file, 
+under the argument ```coastlines_gshhg_dir/```.
+
+#### 6. Prepare the RACMO surface mass balance product
+
+#### 7. Prepare all other models' ice thickness solutions
 
 
 ### Create the training dataset 🏋️
