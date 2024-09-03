@@ -217,6 +217,11 @@ The code also contains a module to perform inference on a glacier, by specifying
 ## Model inference 🔮
 
 ---
+```
+python iceboost_deploy.py
+```
+This piece of code loads the two trained modules and performs model deploy on either one single glacier,
+a list of glaciers, or a regional simulation of all glaciers. 
 
 ## Acknowledgments
 
