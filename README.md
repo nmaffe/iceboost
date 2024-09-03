@@ -10,7 +10,14 @@ to model the ice thickness of the World's glaciers
 ### Prepare model inputs
 Specify the location of the following inputs in the ``` config/config.yaml``` file.
 
-#### 1. Tandem-X EDEM tiles
+#### 1. Setup OGGM
+Install [OGGM](https://oggm.org/). ICEBOOST uses OGGM's glacier geometries, v62. They are a slight revision-improvement 
+of the official, RGI v6 repository, with some additional glaciers added as well.
+Once installed, specify its location in the ``` config/config.yaml``` file,
+under the ```oggm_dir``` argument.
+
+
+#### 2. Tandem-X EDEM tiles
 The model needs a Digital Elevation Model. We use Tandem-X EDEM. To automatically download 
 all but only the necessary tiles that contain glaciers. Ensure that you have enough storage space (~600.0 GB).
 
@@ -48,7 +55,7 @@ Repeat for all 19 txt files.
 Great. You should have all zip tiles in all folders. 
 Now the last step is unpacking them.
 
-#### 2. Prepare ERA-5 temperature
+#### 3. Prepare ERA-5 temperature
 The model needs a temperature field over all glaciers. We use t2m from ERA5-Land and ERA5 merged together 
 and averaged over 2000-2010. 
 Download these 2 products from the [Copernicus Climate Change Service C3S Climate Date Store](https://cds.climate.copernicus.eu/cdsapp#!/home) 
@@ -64,14 +71,42 @@ destination folder for the generated file.
 
 In the code, set ```save=True``` to save the generated ```era5land_era5.nc``` temperature field.
 
-#### 3. Prepare the ice velocity products
+#### 4. Prepare the ice velocity products
 ICEBOOST uses surface ice velocity from [Millan et al. (2022)](https://www.sedoo.fr/theia-publication-products/?uuid=55acbdd5-3982-4eac-89b2-46703557938c), 
 [Joughin et al. 2016 (Greenland, prod. NSIDC-0670)](https://nsidc.org/data/nsidc-0670/versions/1),
 and [Mouginot et al. 2019 (Antarctica, prod. NSIDC-0754)](https://nsidc.org/data/nsidc-0754/versions/1). 
-Download these products and specify the folders in the ``` config/config.yaml``` file. 
-Put Millan's rgi-1-2 tiles in the same folder. Similarly, rgi-13-14-15 tiles together. 
-- - 
-#### 4. Prepare the world's coastlines product
+
+Setup a directory structure like the following, download tiles and place them in the respective folders.
+- [Millan et al. (2022)](https://www.sedoo.fr/theia-publication-products/?uuid=55acbdd5-3982-4eac-89b2-46703557938c)
+- Greenland_NSIDC: ice velocity of Greenland from [NSIDC](https://nsidc.org/data/nsidc-0670/versions/1)
+- Antarctica_NSIDC: Ice velocity of Antarctica from [NSIDC](https://nsidc.org/data/nsidc-0754/versions/1)
+```
+Millan/             
+└── velocity/           
+    ├── RGI-1-2/        
+    ├── RGI-3/
+    ├── RGI-4/
+    ├── RGI-5/
+    ├── ...
+    ├── RGI-12/
+    ├── RGI-13-15/
+    ├── RGI-16/
+    ├── ...
+    └── RGI-19/
+Greenland_NSIDC
+└── velocity/  
+Antarctica_NSIDC
+└── velocity/  
+
+```
+
+Note: place Millan et al. (2022) tiles in RGI 1-2 and 13-14-15 together. 
+
+Specify the location of these folders in the ``` config/config.yaml``` file, under the arguments:
+```millan_velocity_dir```, ```NSIDC_velocity_Greenland_dir```, and ```NSIDC_velocity_Antarctica_dir```.
+
+#### 5. Prepare the world's coastlines product
+
 
 ### Create the training dataset 🏋️
 
