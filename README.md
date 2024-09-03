@@ -80,7 +80,8 @@ Setup a directory structure like the following, download tiles and place them in
 - Greenland_NSIDC: ice velocity of Greenland from [NSIDC](https://nsidc.org/data/nsidc-0670/versions/1)
 - Antarctica_NSIDC: Ice velocity of Antarctica from [NSIDC](https://nsidc.org/data/nsidc-0754/versions/1)
 ```
-Millan/             
+Millan/
+├── thickness/             
 └── velocity/           
     ├── RGI-1-2/        
     ├── RGI-3/
@@ -93,12 +94,21 @@ Millan/
     ├── ...
     └── RGI-19/
 Greenland_NSIDC
-└── velocity/  
+├── thickness/
+└── velocity/
 Antarctica_NSIDC
-└── velocity/  
+├── thickness/NSIDC-0756/
+└── velocity/NSIDC-0754/ 
 ```
 
 Note: place Millan et al. (2022) tiles in RGI 1-2 and 13-14-15 together. 
+
+From NSIDC download the ```greenland_vel_mosaic250_vx_v1.tif``` and ```greenland_vel_mosaic250_vy_v1.tif``` files
+and place them in ```Greenland_NSIDC/velocity/```. 
+
+From NSIDC download the ```antarctic_ice_vel_phase_map_v01.nc``` file 
+and place it in ```Antarctica_NSIDC/velocity/NSIDC-0754/```. 
+
 
 Specify the location of these folders in the ``` config/config.yaml``` file, under the arguments:
 ```millan_velocity_dir```, ```NSIDC_velocity_Greenland_dir```, and ```NSIDC_velocity_Antarctica_dir```.
@@ -149,8 +159,23 @@ racmo/
 In ``` config/config.yaml``` file, specify the location of the racmo root folder under the argument ```racmo_dir/```.
 
 #### 7. Prepare all other models' ice thickness solutions for comparisons
+ICEBOOST code uses the following products of ice thickness distributions for comparisons:
+- [Millan et al. (2022)](https://www.sedoo.fr/theia-publication-products/?uuid=55acbdd5-3982-4eac-89b2-46703557938c), all regions
+- [BedMachine Greenland, Version 5](https://nsidc.org/data/idbmg4/versions/5)
+- [BedMachine Antarctica, Version 3](https://nsidc.org/data/nsidc-0756/versions/3)
+- [Farinotti et al. (2019)](https://www.research-collection.ethz.ch/handle/20.500.11850/315707)
 
+Download all ice thickness tiles from [Millan et al. (2022)](https://www.sedoo.fr/theia-publication-products/?uuid=55acbdd5-3982-4eac-89b2-46703557938c)
+and place them inside the ```Millan/thickness/``` folder, following the same structure described for the velocity tiles (point 4).
 
+From NSIDC download ```BedMachineGreenland-v5.nc``` and place it in ```Greenland_NSIDC/thickness```. 
+From NSIDC download ```BedMachineAntarctica-v3.nc``` and place it in ```Antarctica_NSIDC/thickness/NSIDC-0756/```. 
+
+From [Farinotti et al. (2019)](https://www.research-collection.ethz.ch/handle/20.500.11850/315707), download 
+the ```composite_thickness_RGI60-all_regions.zip``` archive and extract its content in a folder ```Farinotti/```.
+
+Finally, in ``` config/config.yaml```, specify the location of the following folders: ```millan_icethickness_dir```,
+```NSIDC_icethickness_Greenland_dir```, ```NSIDC_icethickness_Antarctica_dir```, ```farinotti_icethickness_dir```.
 ### Create the training dataset 🏋️
 
 ---
