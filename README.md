@@ -7,8 +7,7 @@ a Gradient-Boosted Tree framework
 to model the ice thickness of the World's glaciers
 
 ---
-### Prepare model inputs
-Specify the location of the following inputs in the ``` config/config.yaml``` file.
+## Prepare model inputs
 
 #### 1. Setup OGGM
 Install [OGGM](https://oggm.org/). ICEBOOST uses OGGM's glacier geometries, v62. They are a slight revision-improvement 
@@ -160,39 +159,40 @@ In ``` config/config.yaml``` file, specify the location of the racmo root folder
 
 #### 7. Prepare all other models' ice thickness solutions for comparisons
 ICEBOOST code uses the following products of ice thickness distributions for comparisons:
-- [Millan et al. (2022)](https://www.sedoo.fr/theia-publication-products/?uuid=55acbdd5-3982-4eac-89b2-46703557938c), all regions
-- [BedMachine Greenland, Version 5](https://nsidc.org/data/idbmg4/versions/5)
-- [BedMachine Antarctica, Version 3](https://nsidc.org/data/nsidc-0756/versions/3)
-- [Farinotti et al. (2019)](https://www.research-collection.ethz.ch/handle/20.500.11850/315707)
+- [Millan et al. (2022)](https://www.sedoo.fr/theia-publication-products/?uuid=55acbdd5-3982-4eac-89b2-46703557938c): all regions
+- [BedMachine Greenland, v5](https://nsidc.org/data/idbmg4/versions/5): Greenland
+- [BedMachine Antarctica, v3](https://nsidc.org/data/nsidc-0756/versions/3): Antarctica
+- [Farinotti et al. (2019)](https://www.research-collection.ethz.ch/handle/20.500.11850/315707): all regions
 
 Download all ice thickness tiles from [Millan et al. (2022)](https://www.sedoo.fr/theia-publication-products/?uuid=55acbdd5-3982-4eac-89b2-46703557938c)
 and place them inside the ```Millan/thickness/``` folder, following the same structure described for the velocity tiles (point 4).
 
-From NSIDC download ```BedMachineGreenland-v5.nc``` and place it in ```Greenland_NSIDC/thickness```. 
+From NSIDC download ```BedMachineGreenland-v5.nc``` and place it in ```Greenland_NSIDC/thickness/```. 
 From NSIDC download ```BedMachineAntarctica-v3.nc``` and place it in ```Antarctica_NSIDC/thickness/NSIDC-0756/```. 
 
 From [Farinotti et al. (2019)](https://www.research-collection.ethz.ch/handle/20.500.11850/315707), download 
 the ```composite_thickness_RGI60-all_regions.zip``` archive and extract its content in a folder ```Farinotti/```.
 
-Finally, in ``` config/config.yaml```, specify the location of the following folders: ```millan_icethickness_dir```,
+Finally, in ``` config/config.yaml```, specify the locations of the following folders: ```millan_icethickness_dir```,
 ```NSIDC_icethickness_Greenland_dir```, ```NSIDC_icethickness_Antarctica_dir```, ```farinotti_icethickness_dir```.
-### Create the training dataset 🏋️
+
+## Create the training dataset 🏋️
 
 ---
 
-### Process training dataset and downscale 🏋️
+## Process training dataset and downscale 🏋️
 
 ---
 
-### Train model ensemble 🤖
+## Train model ensemble 🤖
 
 ---
 
-### Model inference 🔮
+## Model inference 🔮
 
 ---
 
-### Acknowledgments
+## Acknowledgments
 
 <p align="left">
   <a href="https://marie-sklodowska-curie-actions.ec.europa.eu/">
