@@ -2,6 +2,7 @@
     <img alt="Logo" src="img/logo_iceboost.svg" style="width: 100%; height: auto;" />
 </div>
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13145836.svg)](https://doi.org/10.5281/zenodo.13145836)
 
 a Gradient-Boosted Tree framework 
 to model the ice thickness of the World's glaciers
