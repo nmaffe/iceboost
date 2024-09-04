@@ -223,7 +223,7 @@ python iceboost_deploy.py
 ```
 The code loads the two trained modules and performs model deploy on either one single glacier,
 a list of glaciers, or on all glaciers regionally. Under the hood, the code runs ```fetch_glacier_metadata.py```, which
-generates the array features on-the-fly.
+generates the feature array on-the-fly.
 
 In ```config/config.yaml``` you can also specify the number of points you want to generate: ```generate n_points_regression```.
 
