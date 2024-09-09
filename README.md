@@ -4,11 +4,13 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13145836.svg)](https://doi.org/10.5281/zenodo.13145836)
 
+
+<p align="center">
 a Gradient-Boosted Tree framework 
 to model the ice thickness of the World's glaciers
 
-![alt text](img/RGI60-07.00832.gif)
-
+  <img src="img/iceboost.gif" alt="IceBoost GIF">
+</p>
 ---
 ## Prepare the model inputs
 
