@@ -7,6 +7,8 @@
 a Gradient-Boosted Tree framework 
 to model the ice thickness of the World's glaciers
 
+![alt text](img/RGI60-07.00832.gif)
+
 ---
 ## Prepare the model inputs
 
