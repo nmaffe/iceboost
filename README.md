@@ -11,6 +11,7 @@ to model the ice thickness of the World's glaciers
 
   <img src="img/iceboost.gif" alt="IceBoost GIF">
 </p>
+
 ---
 ## Prepare the model inputs
 
