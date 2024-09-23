@@ -22,6 +22,9 @@ model_filename_cat: 'iceboost_cat_20240731.cbm'
 filename_csv_deploy: 'iceboost_deploy_list_id.csv'
 metadata_csv_file: '/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata35_hmineq0.0_tmin20050000_mean_grid_100.csv'
 
+# save model
+save_model: 0
+
 # model deploy save figures
 deploy_save_figs: 0
 
