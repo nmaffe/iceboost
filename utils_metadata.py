@@ -11,6 +11,7 @@ import xgboost as xgb
 import catboost as cb
 from PIL import Image
 import matplotlib.pyplot as plt
+import networkx
 
 def haversine(lon1, lat1, lon2, lat2):
     """
@@ -247,3 +248,64 @@ def create_PIL_image(array, png_resolution=None):
     image = Image.fromarray(rgba_array)
     image_resized = image.resize((png_resolution, png_resolution), Image.Resampling.LANCZOS)
     return image_resized
+
+def get_rgi_products(rgi):
+    utils.get_rgi_dir(version='62')  # setup oggm version
+    utils.get_rgi_intersects_dir(version='62')
+
+    if not isinstance(rgi, str): rgi = f"{rgi:02d}"
+
+    # get rgi region and intersect shp files
+    oggm_rgi_shp = utils.get_rgi_region_file(rgi, version='62')
+    oggm_rgi_intersects_shp = utils.get_rgi_intersects_region_file(rgi, version='62')
+
+    # get rgi dataset of glaciers and glaciers intersects
+    oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
+    oggm_rgi_intersects = gpd.read_file(oggm_rgi_intersects_shp, engine='pyogrio')
+
+    # Create graph of connectivity needed for distance calculations
+    rgi_graph = networkx.Graph()
+    edges = oggm_rgi_intersects[['RGIId_1', 'RGIId_2']].values
+    rgi_graph.add_edges_from(edges)
+
+    # mass balance rgi dataframe
+    mbdf = utils.get_geodetic_mb_dataframe()
+    mbdf = mbdf.loc[mbdf['period'] == '2000-01-01_2020-01-01']
+    mbdf_rgi = mbdf.loc[mbdf['reg'] == int(rgi)]
+
+    rgi_products = (oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi)
+
+    return rgi_products
+
+def get_coastline_dataframe(GSHHG_folder):
+    gdf16 = gpd.read_file(f'{GSHHG_folder}GSHHS_f_L1_L6.shp', engine='pyogrio')
+    return gdf16
+
+
+def find_cluster_with_graph(graph, start_node, max_depth=None):
+    if not graph.has_node(start_node):
+        return [start_node]
+    # Find all nodes in the connected component
+    #neighbors = networkx.node_connected_component(graph, start_node)
+    #return list(neighbors)
+    # Use a BFS traversal to get nodes up to the max_depth
+    nodes_at_depth = set()
+    nodes_to_visit = [(start_node, 0)]  # (node, current_depth)
+
+    while nodes_to_visit:
+        current_node, current_depth = nodes_to_visit.pop(0)
+
+        # If max_depth is not None and current_depth exceeds max_depth, stop processing this branch
+        if max_depth is not None and current_depth > max_depth:
+            continue
+
+        # Add the current node to the set of nodes to return
+        nodes_at_depth.add(current_node)
+
+        # Add neighbors to the list with incremented depth
+        neighbors = list(graph.neighbors(current_node))
+        for neighbor in neighbors:
+            if neighbor not in nodes_at_depth:
+                nodes_to_visit.append((neighbor, current_depth + 1))
+
+    return list(nodes_at_depth)
