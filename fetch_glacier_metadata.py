@@ -26,7 +26,6 @@ from pyproj import Proj, Transformer, Geod
 import utm
 from joblib import Parallel, delayed
 from functools import partial
-import networkx
 
 from create_rgi_mosaic_tanxedem import fetch_dem, create_glacier_tile_dem_mosaic
 from utils_metadata import *
@@ -47,67 +46,6 @@ The interpolation method="nearest" yields much less nans close to borders if com
 interpolation and therefore is preferred. 
 
 """
-def get_rgi_products(rgi):
-    utils.get_rgi_dir(version='62')  # setup oggm version
-    utils.get_rgi_intersects_dir(version='62')
-
-    if not isinstance(rgi, str): rgi = f"{rgi:02d}"
-
-    # get rgi region and intersect shp files
-    oggm_rgi_shp = utils.get_rgi_region_file(rgi, version='62')
-    oggm_rgi_intersects_shp = utils.get_rgi_intersects_region_file(rgi, version='62')
-
-    # get rgi dataset of glaciers and glaciers intersects
-    oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
-    oggm_rgi_intersects = gpd.read_file(oggm_rgi_intersects_shp, engine='pyogrio')
-
-    # Create graph of connectivity needed for distance calculations
-    rgi_graph = networkx.Graph()
-    edges = oggm_rgi_intersects[['RGIId_1', 'RGIId_2']].values
-    rgi_graph.add_edges_from(edges)
-
-    # mass balance rgi dataframe
-    mbdf = utils.get_geodetic_mb_dataframe()
-    mbdf = mbdf.loc[mbdf['period'] == '2000-01-01_2020-01-01']
-    mbdf_rgi = mbdf.loc[mbdf['reg'] == int(rgi)]
-
-    rgi_products = (oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi)
-
-    return rgi_products
-
-def get_coastline_dataframe(GSHHG_folder):
-    gdf16 = gpd.read_file(f'{GSHHG_folder}GSHHS_f_L1_L6.shp', engine='pyogrio')
-    return gdf16
-
-
-def find_cluster_with_graph(graph, start_node, max_depth=None):
-    if not graph.has_node(start_node):
-        return [start_node]
-    # Find all nodes in the connected component
-    #neighbors = networkx.node_connected_component(graph, start_node)
-    #return list(neighbors)
-    # Use a BFS traversal to get nodes up to the max_depth
-    nodes_at_depth = set()
-    nodes_to_visit = [(start_node, 0)]  # (node, current_depth)
-
-    while nodes_to_visit:
-        current_node, current_depth = nodes_to_visit.pop(0)
-
-        # If max_depth is not None and current_depth exceeds max_depth, stop processing this branch
-        if max_depth is not None and current_depth > max_depth:
-            continue
-
-        # Add the current node to the set of nodes to return
-        nodes_at_depth.add(current_node)
-
-        # Add neighbors to the list with incremented depth
-        neighbors = list(graph.neighbors(current_node))
-        for neighbor in neighbors:
-            if neighbor not in nodes_at_depth:
-                nodes_to_visit.append((neighbor, current_depth + 1))
-
-    return list(nodes_at_depth)
-
 
 def populate_glacier_with_metadata(glacier_name,
                                    config = None,
@@ -797,7 +735,7 @@ def populate_glacier_with_metadata(glacier_name,
         millan_ith_nan_count_perc = np.isnan(points_df['ith_m']).sum() / len(points_df['ith_m'])
         #print(millan_ith_nan_count_perc)
         if millan_ith_nan_count_perc > .5:
-            print(f'Millan ith has too many nans for {glacier_name}. Will try to use BedMachine tiles')
+            print(f'Millan ith has too many nans for {glacier_name}. Will try to use BedMachine tiles') if verbose else None
 
             # Interpolate BedMachinev5 ice field
             tile_ith_bedmacv5 = rioxarray.open_rasterio(file_ith_bedmacv5, masked=False)
@@ -949,8 +887,17 @@ def populate_glacier_with_metadata(glacier_name,
 
         plot_nsidc_green_4paper = False
         if plot_nsidc_green_4paper:
+            from matplotlib.gridspec import GridSpec
             # Note this works for a greenland glacier with EPSG:3413
-            fig, (ax1, ax2) = plt.subplots(1,2, figsize=(5.7,3))
+            #fig, (ax1, ax2) = plt.subplots(1,2, figsize=(5.7,3))
+            fig = plt.figure(figsize=(9,5))
+            gs = GridSpec(1, 3, width_ratios=[1, 1, 0.05])
+
+            # Create the axes
+            ax1 = fig.add_subplot(gs[0])
+            ax2 = fig.add_subplot(gs[1])
+            cax = fig.add_subplot(gs[2])
+
             nuns = gl_geom_nunataks_gdf.to_crs(crs="EPSG:3413")
             ext = gl_geom_ext_gdf.to_crs(crs="EPSG:3413")
             ext.plot(ax=ax1, edgecolor='k', facecolor='none', linewidth=1, zorder=2)
@@ -959,22 +906,29 @@ def populate_glacier_with_metadata(glacier_name,
             im = focus_filter_v50_ar.plot(ax=ax1, cmap='jet', alpha=1, norm=norm, add_colorbar=False)
 
             s = ax2.scatter(x=all_eastings_ar, y=all_northings_ar, c=points_df['v50'],
-                           cmap='jet', s=1, ec=None, norm=norm, alpha=1, zorder=1)
+                           cmap='jet', s=5, ec=None, norm=norm, alpha=1, zorder=1)
             ext.plot(ax=ax2, edgecolor='k', facecolor='none', linewidth=1, zorder=2)
             nuns.plot(ax=ax2, edgecolor='k', facecolor='none', linewidth=1, zorder=2)
-            cbar1 = plt.colorbar(im, ax=ax1, fraction=0.062, pad=0.04)
-            cbar2 = plt.colorbar(s, ax=ax2, fraction=0.062, pad=0.04)
-            cbar1.set_label('Ice surface velocity (m/yr)')
-            cbar2.set_label('Ice surface velocity (m/yr)')
+            #cbar1 = plt.colorbar(s, ax=cax, fraction=0.062, pad=0.04)
+            #cbar2 = plt.colorbar(s, ax=ax2, fraction=0.062, pad=0.04)
+            #cbar1.set_label('Ice surface velocity (m/yr)')
+            #cbar2.set_label('Ice surface velocity (m/yr)')
+            cbar1 = plt.colorbar(s, cax=cax)  # ax=ax1)
+            cbar1.ax.tick_params(labelsize=16)
+            cbar1.set_label('Ice surface velocity (m/yr)', labelpad=15, rotation=90, fontsize=16)
 
             ax1.set_xlim(ax2.get_xlim())
             ax1.set_ylim(ax2.get_ylim())
             ax1.set_title('')
-            ax1.set_xlabel('Eastings (m)')
-            ax1.set_ylabel('Northings (m)')
+            ax1.set_xlabel('Eastings (m)', fontsize=16)
+            ax1.set_ylabel('Northings (m)', fontsize=16)
             ax2.set_title('')
-            ax2.set_xlabel('Eastings (m)')
-            ax2.set_ylabel('Northings (m)')
+            ax2.set_xlabel('Eastings (m)', fontsize=16)
+            ax2.set_ylabel('Northings (m)', fontsize=16)
+            ax1.tick_params(axis='both', labelsize=16)
+            ax2.tick_params(axis='both', labelsize=16)
+
+            plt.subplots_adjust(wspace=0.01)
             plt.tight_layout()
             plt.show()
 
@@ -992,7 +946,7 @@ def populate_glacier_with_metadata(glacier_name,
             print(", ".join([f"{col}: {points_df[col].isna().sum()}" for col in cols_millan]))
 
         if points_df['ith_m'].isna().all():
-            print(f"No Millan ith data can be found for rgi {rgi} glacier {glacier_name} at {cenLat} lat {cenLon} lon.")
+            print(f"No Millan ith data can be found for rgi {rgi} glacier {glacier_name} at {cenLat} lat {cenLon} lon.") if verbose else None
 
         return points_df
 
@@ -1899,6 +1853,7 @@ def populate_glacier_with_metadata(glacier_name,
     print(f"Calculating the distances using glacier geometries... ") if verbose else None
     tdist0 = time.time()
 
+    # to remove
     def add_new_neighbors(neighbors, df):
         """ I give a list of neighbors and I should return a new list with added neighbors"""
         for id in neighbors:
@@ -1911,6 +1866,7 @@ def populate_glacier_with_metadata(glacier_name,
         neighbors = np.unique(neighbors)
         return neighbors
 
+    # to remove
     def find_cluster_RGIIds(id, df):
         neighbors0 = np.array([id])
         len0 = len(neighbors0)
@@ -1926,7 +1882,6 @@ def populate_glacier_with_metadata(glacier_name,
     # list_cluster_RGIIds = find_cluster_RGIIds(glacier_name, oggm_rgi_intersects)# (SLOW NESTED LOOP METHOD)
     list_cluster_RGIIds = find_cluster_with_graph(rgi_graph, glacier_name, max_depth=graph_max_layer_depth)
     no_glaciers_in_cluster = len(list_cluster_RGIIds)
-
     print(f"Cluster: {no_glaciers_in_cluster} glaciers created in: {time.time()-tdist0:.3f}") if verbose else None
 
     # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks) and convert to UTM
@@ -1938,11 +1893,13 @@ def populate_glacier_with_metadata(glacier_name,
 
     # Now remove all ice divides
     # Note: .union_all(method='coverage') is faster than 'unary' but may lead to incorrect results if polygons overlap
-    try:
-        cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='coverage'), crs="EPSG:4326")
-    except GEOSException as e:
-        print(f"Coverage method failed: {e} Falling back to unary method.") if verbose else None
-        cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'), crs="EPSG:4326")
+    #try:
+    #    cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='coverage'), crs="EPSG:4326")
+    #except GEOSException as e:
+    #    print(f"Coverage method failed: {e} Falling back to unary method.") if verbose else None
+    #    cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'), crs="EPSG:4326")
+    cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'), crs="EPSG:4326")
+
     cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
     if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
         cluster_exterior_ring = [cluster_geometry_no_divides_epsg.item().exterior]  # shapely.geometry.polygon.LinearRing
@@ -1961,6 +1918,12 @@ def populate_glacier_with_metadata(glacier_name,
     geoseries_geometries_epsg = gpd.GeoSeries(cluster_exterior_ring + cluster_interior_rings, crs=glacier_epsg)
     no_geometries_in_cluster = len(geoseries_geometries_epsg)
     print(f"Cluster: {no_geometries_in_cluster} geometries created in: {time.time()-tgeoms0:.3f}") if verbose else None
+
+    # Calculate the area of the cluster in km2
+    cluster_exterior_ring_gpd = gpd.GeoSeries([cluster_exterior_ring[0]], crs=glacier_epsg).to_crs("EPSG:4326")
+    area_cluster, perimeter_cluster = Geod(ellps="WGS84").geometry_area_perimeter(cluster_exterior_ring_gpd.iloc[0])
+    area_cluster = abs(area_cluster) * 1e-6 # km^2
+    #print(glacier_area, area_cluster)
 
     # Method that uses KDTree index (best method: found to be same as exact method and ultra fast)
     run_method_KDTree_index = True
@@ -1996,9 +1959,9 @@ def populate_glacier_with_metadata(glacier_name,
 
     plot_minimum_distances = False
     if plot_minimum_distances:
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=(8,7))
         #ax.plot(*gl_geom.exterior.xy, color='blue')
-        ax.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='k')  # first entry is outside border
+        ax.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='r')  # first entry is outside border
         for geom in geoseries_geometries_epsg.loc[1:]:
             ax.plot(*geom.xy, lw=1, c='grey')
         #for geom in geoseries_geometries_epsg.loc[20:]:
@@ -2006,10 +1969,11 @@ def populate_glacier_with_metadata(glacier_name,
         s1 = ax.scatter(x=points_coords_array[:,0], y=points_coords_array[:,1], s=1, c=min_distances, zorder=0)
         #s1 = ax.scatter(x=points_df['lons'], y=points_df['lats'], s=10, c=min_distances3, alpha=0.5, zorder=0)
         cbar = plt.colorbar(s1, ax=ax)
-        cbar.set_label('Distance to closest ice free region (km)', labelpad=15, rotation=90, fontsize=14)
-        ax.set_xlabel('eastings (m)', fontsize=14)
-        ax.set_ylabel('northings (m)', fontsize=14)
-        ax.tick_params(axis='both', labelsize=12)
+        cbar.set_label('Distance to closest ice free region (km)', labelpad=15, rotation=90, fontsize=16)
+        ax.set_xlabel('Eastings (m)', fontsize=16)
+        ax.set_ylabel('Northings (m)', fontsize=16)
+        ax.tick_params(axis='both', labelsize=16)
+        cbar.ax.tick_params(labelsize=16)
         plt.tight_layout()
         plt.show()
 
@@ -2144,6 +2108,9 @@ def populate_glacier_with_metadata(glacier_name,
                 plt.show()
 
     points_df['dist_from_border_km_geom'] = min_distances
+    points_df['Cluster_area'] = area_cluster
+    points_df['Cluster_glaciers'] = no_glaciers_in_cluster
+    points_df['Cluster_geometries'] = no_geometries_in_cluster
     tdist1 = time.time()
     tdist = tdist1 - tdist0
     print(f"Finished distance calculations.") if verbose else None
