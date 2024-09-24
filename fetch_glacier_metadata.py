@@ -71,19 +71,21 @@ def populate_glacier_with_metadata(glacier_name,
     try:
         # Get glacier dataset
         gl_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name]
-        # Get the UTM EPSG code from glacier center coordinates
-        cenLon, cenLat = gl_df['CenLon'].item(), gl_df['CenLat'].item()
-        _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(cenLat, cenLon)
-        print(f"Glacier {glacier_name} found. Lat: {cenLat}, Lon: {cenLon}") if verbose else None
+        gl_geom = gl_df['geometry'].item()  # glacier geometry Polygon
+        gl_geom_ext = Polygon(gl_geom.exterior)  # glacier geometry Polygon
+        gl_geom_nunataks_list = [Polygon(nunatak) for nunatak in gl_geom.interiors]  # list of nunataks Polygons
         assert len(gl_df) == 1, "Check this please."
         # print(gl_df.T)
     except Exception as e:
         print(f"Error. {glacier_name} not present in OGGM's RGI v62.")
         return None
 
-    gl_geom = gl_df['geometry'].item() # glacier geometry Polygon
-    gl_geom_ext = Polygon(gl_geom.exterior)  # glacier geometry Polygon
-    gl_geom_nunataks_list = [Polygon(nunatak) for nunatak in gl_geom.interiors] # list of nunataks Polygons
+    # center of glacier and glacier epsg
+    glacier_centroid = gl_geom_ext.centroid
+    cenLon, cenLat = glacier_centroid.x, glacier_centroid.y
+    _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(cenLat, cenLon)
+    print(f"Glacier {glacier_name} found. Lat: {cenLat}, Lon: {cenLon}") if verbose else None
+
     llx, lly, urx, ury = gl_geom.bounds # geometry bounds
 
     # Geodataframes of external boundary and all internal nunataks
