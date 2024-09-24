@@ -250,3 +250,18 @@ This work has received funding from the European Union’s Horizon 2020
 research and innovation programme, under the Marie Skłodowska-Curie 
 grant agreement No 101066651, project SKYNET. This work was also funded by 
 the Climate Change  AI Innovation Grants program, under the project ICENET.
+
+## Citation
+If you found this code helpful, please consider citing:
+```
+@Article{egusphere-2024-2455,
+    author = {Maffezzoli, N. and Rignot, E. and Barbante, C. and Petersen, T. and Vascon, S.},
+    title = {A gradient-boosted tree framework to model the ice thickness of the World's glaciers (IceBoost v1)},
+    journal = {EGUsphere},
+    volume = {2024},
+    year = {2024},
+    pages = {1--27},
+    url = {https://egusphere.copernicus.org/preprints/2024/egusphere-2024-2455/},
+    doi = {10.5194/egusphere-2024-2455}
+}
+```
