@@ -1,5 +1,6 @@
 import argparse
 import warnings
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from scipy import stats
@@ -23,7 +24,7 @@ parser.add_argument('--input_metadata_folder', type=str,
                     default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/",
                     help="Input metadata folder to be gridded")
 parser.add_argument('--input_metadata_file', type=str,
-                    default="metadata35.csv", help="Input metadata file to be gridded")
+                    default="metadata37.csv", help="Input metadata file to be gridded")
 parser.add_argument('--tmin', type=int, default=20050000, help="Keep only measurements after this year.")
 parser.add_argument('--hmin', type=float, default=0.0, help="Keep only measurements with thickness greater than this.")
 parser.add_argument('--method_grid', type=str, default='mean', help="Supported options: mean, median")
@@ -38,6 +39,8 @@ glathida = pd.read_csv(f"{args.input_metadata_folder}{args.input_metadata_file}"
 """ A. Work on the dataset """
 # A.1 Remove old (-er than 2005) measurements and erroneous data (if DATA_FLAG is not nan)
 cond = ((glathida['SURVEY_DATE'] > args.tmin) & (glathida['DATA_FLAG'].isna()) & (glathida['THICKNESS']>=args.hmin))
+#todo: aggiungere la modifica qua: glathida.loc[glathida['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
+
 glathida = glathida[cond]
 print(f'Original columns: {list(glathida)} \n')
 
@@ -47,8 +50,9 @@ cols = ['RGI', 'RGIId', 'POINT_LAT', 'POINT_LON', 'THICKNESS', 'Area', 'Area_ice
        'Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'ith_m', 'ith_f',
         'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
         'Form', 'Aspect', 'TermType', 'v50', 'v100', 'v150', 'v300', 'v450', 'vgfa',
-        'curv_50', 'curv_300', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa', 't2m', 'dist_from_ocean']
-
+        'curv_50', 'curv_300', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa', 't2m', 'dist_from_ocean',
+        'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax', 'Cluster_area', 'Cluster_glaciers',
+        'Cluster_geometries', 'elevation_0_1']
 
 glathida = glathida[cols]
 print(f'We keep only the following columns: \n {list(glathida)} \n{len(glathida)} rows')
@@ -70,21 +74,23 @@ print(f'We have {len(rgi_ids)} unique glaciers and {len(glathida)} rows')
 #    print(rgi, len(glathida_rgi['RGIId'].unique().tolist()), len(glathida_rgi))
 #print(glathida['RGI'].value_counts())
 
-glathida_gridded = pd.DataFrame(columns=glathida.columns)
+#glathida_gridded = pd.DataFrame(columns=glathida.columns) # slower
+gridded_data_list = []  # faster method
 
 # These features are the local ones that I have to average
 features_to_grid = ['THICKNESS', 'elevation', 'smb', 'dist_from_border_km_geom',
         'ith_m', 'ith_f', 'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
         'v50', 'v100', 'v150', 'v300', 'v450', 'vgfa',
-        'curv_50', 'curv_300', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa', 't2m', 'dist_from_ocean']
+        'curv_50', 'curv_300', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa', 't2m', 'dist_from_ocean',
+                    'elevation_0_1']
 
 list_num_measurements_before_grid = []
 list_num_measurements_after_grid = []
 
 # loop over unique glaciers
-for n, rgiid in enumerate(rgi_ids):
+for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", leave=True):
 
-    #rgiid = 'RGI60-03.01517'
+    #rgiid = 'RGI60-05.04288'
 
     glathida_id = glathida.loc[glathida['RGIId'] == rgiid]
     glathida_id_grid = pd.DataFrame(columns=glathida_id.columns)
@@ -107,6 +113,18 @@ for n, rgiid in enumerate(rgi_ids):
     termtype = glathida_id['TermType'].iloc[0]
     dmdtda = glathida_id['dmdtda_hugo'].iloc[0]
 
+    # new glacier-wide constant features calculated using dem
+    zmin_with_dem       = glathida_id['zmin'].iloc[0]
+    zmax_with_dem       = glathida_id['zmax'].iloc[0]
+    zmed_with_dem       = glathida_id['zmed'].iloc[0]
+    slope_with_dem      = glathida_id['slope'].iloc[0]
+    aspect_with_dem     = glathida_id['aspect'].iloc[0]
+    curvature_with_dem  = glathida_id['curvature'].iloc[0]
+    lmax_with_dem       = glathida_id['lmax'].iloc[0]
+    cluster_area        = glathida_id['Cluster_area'].iloc[0]
+    cluster_no_glaciers = glathida_id['Cluster_glaciers'].iloc[0]
+    cluster_no_geometries = glathida_id['Cluster_geometries'].iloc[0]
+
     # make same checks
     if not glathida_id['Area'].nunique() == 1: raise ValueError(f"Glacier {rgiid} should have only 1 unique Area.")
     if not glathida_id['RGI'].nunique() == 1: raise ValueError(f"Glacier {rgiid} should have only 1 unique RGI.")
@@ -118,8 +136,9 @@ for n, rgiid in enumerate(rgi_ids):
 
     # if only one measurement, append that line as is
     if (len(glathida_id) == 1):
-        glathida_gridded = pd.concat([glathida_gridded, glathida_id], ignore_index=True)
+        #glathida_gridded = pd.concat([glathida_gridded, glathida_id], ignore_index=True) # slow method
         list_num_measurements_after_grid.append(len(glathida_id))
+        gridded_data_list.append(glathida_id) # Append data to list (faster method)
         continue
 
     # if more than one measurement, calculate the rectangular domain for gridding
@@ -154,7 +173,7 @@ for n, rgiid in enumerate(rgi_ids):
         ycenters = (yedges[:-1] + yedges[1:]) / 2
 
         # old version: remove all nans.
-        non_nan_mask = ~np.isnan(H) # boolean matrix of H of only non-nans
+        # non_nan_mask = ~np.isnan(H) # boolean matrix of H of only non-nans
         #x_indices, y_indices = np.where(non_nan_mask) # these are the indexes of non-non H
         #print(x_indices.shape, y_indices.shape)
 
@@ -179,9 +198,14 @@ for n, rgiid in enumerate(rgi_ids):
         glathida_id_grid['POINT_LAT'] = ys  # unnecessarily overwriting each loop
         glathida_id_grid[feature] = zs
 
+        #if feature == 'THICKNESS':
+        #    print(np.sum(feature_array == 0), len(feature_array), np.sum(feature_array == 0)/len(feature_array))
+        #    print(np.sum(zs == 0), np.count_nonzero(zs>=0), np.sum(zs == 0)/np.count_nonzero(zs>=0))
+        #    input('wait')
+
         # plot
         ifplot = False
-        if (ifplot and feature == 'THICKNESS' and  rgiid=='RGI60-03.01517'):
+        if (ifplot and feature == 'THICKNESS' and  rgiid=='RGI60-05.04288'):
 
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
@@ -217,20 +241,35 @@ for n, rgiid in enumerate(rgi_ids):
     glathida_id_grid['Aspect'] = aspect
     glathida_id_grid['dmdtda_hugo'] = dmdtda
 
+    # new
+    glathida_id_grid['zmin'] = zmin_with_dem
+    glathida_id_grid['zmax'] = zmax_with_dem
+    glathida_id_grid['zmed'] = zmed_with_dem
+    glathida_id_grid['slope'] = slope_with_dem
+    glathida_id_grid['aspect'] = aspect_with_dem
+    glathida_id_grid['curvature'] = curvature_with_dem
+    glathida_id_grid['lmax'] = lmax_with_dem
+
+    glathida_id_grid['Cluster_area'] = cluster_area
+    glathida_id_grid['Cluster_glaciers'] = cluster_no_glaciers
+    glathida_id_grid['Cluster_geometries'] = cluster_no_geometries
+
     # append glacier gridded dataset to main gridded dataset
     # In the first passage glathida_gridded will be empty so we copy glathida_id_grid
-    if glathida_gridded.empty:
-        glathida_gridded = glathida_id_grid.copy()
-    else:
-        glathida_gridded = pd.concat([glathida_gridded, glathida_id_grid], ignore_index=True)
+    #if glathida_gridded.empty:
+    #    glathida_gridded = glathida_id_grid.copy()
+    #else:
+    #    glathida_gridded = pd.concat([glathida_gridded, glathida_id_grid], ignore_index=True)
+
+    # Append data to list
+    gridded_data_list.append(glathida_id_grid) # faster method
 
     list_num_measurements_after_grid.append(len(glathida_id_grid))
 
-print(f"Finished. No. original measurements {len(glathida)} down to {len(glathida_gridded)}.")
-#print(glathida_gridded.isna().sum())
 
 # Remove all nans from all features except for ith_m and ith_f
-glathida_gridded = glathida_gridded.dropna(subset=cols_dropna)
+glathida_gridded = pd.concat(gridded_data_list, ignore_index=True).dropna(subset=cols_dropna)
+#print(glathida_gridded.isna().sum())
 #print(glathida_gridded.isna().sum())
 
 print(f"Finished. No. original measurements {len(glathida)} down to {len(glathida_gridded)}, divided into:")
