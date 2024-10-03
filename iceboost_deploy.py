@@ -6,12 +6,14 @@ import copy
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator, FormatStrFormatter
+from matplotlib.gridspec import GridSpec
 import pandas as pd
 import earthpy.spatial
 import geopandas as gpd
 from glob import glob
 import xarray, rioxarray
 from oggm import utils
+import imageio
 
 from scipy import stats
 from scipy.interpolate import griddata, NearestNDInterpolator
@@ -58,8 +60,8 @@ run_deploy_from_csv_list = True
 if run_deploy_from_csv_list:
     for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
-        glacier_name_for_generation = 'RGI60-04.06187' #'RGI60-01.13696'# 'RGI60-11.01450' #'RGI60-13.33257' #overwrite #'RGI60-01.13696'
-
+        glacier_name_for_generation = 'RGI60-19.01410' #'RGI60-01.13696'# 'RGI60-11.01450' #'RGI60-13.33257'
+        # RGI60-07.00832
         print(n, glacier_name_for_generation)
         #if f"{glacier_name_for_generation}.png" in os.listdir(f"{config.model_output_results_dir}"):
         #    print(f"{glacier_name_for_generation} already in there.")
@@ -156,6 +158,57 @@ if run_deploy_from_csv_list:
         ).rio.write_crs("EPSG:4326", inplace=True).rio.set_nodata(np.nan, inplace=True)
         data_array = data_array.rio.clip(geometries=[glacier_geometry], crs="EPSG:4326", drop=False, invert=False, all_touched=False)
 
+        plot_for_gif = False
+        if plot_for_gif:
+
+            fig = plt.figure(figsize=(9, 8), facecolor='none')
+            gs = GridSpec(1, 2, width_ratios=[1, 0.05])  # Adjust the width ratios
+
+            # Create the axes
+            ax = fig.add_subplot(gs[0])
+            cax = fig.add_subplot(gs[1])  # Colorbar axis
+
+            dx, dy = x1 - x0, y1 - y0
+            hillshade = copy.deepcopy(focus)
+            hillshade.values = earthpy.spatial.hillshade(focus, azimuth=315, altitude=0)
+            hillshade = hillshade.rio.clip_box(minx=x0 - dx / 8, miny=y0 - dy / 8, maxx=x1 + dx / 8, maxy=y1 + dy / 8)
+
+            im1 = hillshade.plot(ax=ax, cmap='grey', alpha=0.9, zorder=0, add_colorbar=False)
+
+            ax.plot(*exterior_ring.xy, c='k')
+            for nunatak in glacier_nunataks_list:
+                ax.plot(*nunatak.xy, c='k', lw=0.8)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
+            ax.spines['bottom'].set_visible(False)
+            ax.spines['left'].set_visible(False)
+            ax.set_xlabel('Lon ($^{\\circ}$E)', fontsize=16)
+            ax.set_ylabel('Lat ($^{\\circ}$N)', fontsize=16)
+            ax.set_title('')
+
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
+            ax.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+            ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+            ax.tick_params(axis='both', labelsize=16)
+
+            # Frame 0
+            # Create a fake scatter plot (empty) just for the colorbar in frame 0
+            #s1 = ax.scatter([], [], s=1, c=[], cmap='jet', zorder=1, vmin=vmin, vmax=vmax)
+            # Frame 1
+            s1 = ax.scatter(x=lons, y=lats, s=1, c=y_preds_glacier,
+                                            cmap='jet', label='ML', zorder=1, vmin=vmin, vmax=vmax)
+
+            # Create the colorbar
+            cbar1 = plt.colorbar(s1, cax=cax)
+            cbar1.mappable.set_clim(vmin=vmin, vmax=vmax)
+            cbar1.set_label('Thickness (m)', labelpad=15, rotation=90, fontsize=16)
+            cbar1.ax.tick_params(labelsize=16)
+
+            plt.tight_layout()
+            plt.show()
+
         plot_fancy_ML_prediction = False
         if plot_fancy_ML_prediction:
             fig, axes = plt.subplots(1,2, figsize=(8,6))
@@ -171,18 +224,19 @@ if run_deploy_from_csv_list:
             s_glathida = ax.scatter(x=glathida_rgis['POINT_LON'], y=glathida_rgis['POINT_LAT'], c=glathida_rgis['THICKNESS'],
                                     cmap='jet', ec='grey', lw=0.5, s=35, vmin=vmin,vmax=vmax)
 
+
             #s2 = ax2.contourf(lon_grid, lat_grid, thickness_grid, levels=100, cmap='jet')
             #cbar2 = plt.colorbar(s2, ax=ax2)
             #cbar2.set_label('Thickness (m)', labelpad=15, rotation=90, fontsize=16)
 
-            im = hillshade.plot(ax=ax3, cmap='grey', alpha=0.9, add_colorbar=False)
+            im = hillshade.plot(ax=ax3, cmap='grey', alpha=0.9, zorder=0, add_colorbar=False)
             im3 = data_array.plot(ax=ax3, cmap='jet', alpha=0.5, vmin=vmin, vmax=vmax)
 
             cbar = plt.colorbar(s1, ax=ax)
             cbar.mappable.set_clim(vmin=vmin,vmax=vmax)
             cbar.set_label('Thickness (m)', labelpad=15, rotation=90, fontsize=16)
-            cbar.ax.tick_params(labelsize=12)
-            for ax in axes:
+            cbar.ax.tick_params(labelsize=16)
+            for ax in (ax,): #axes
                 ax.plot(*exterior_ring.xy, c='k')
                 for nunatak in glacier_nunataks_list:
                     ax.plot(*nunatak.xy, c='k', lw=0.8)
@@ -199,7 +253,7 @@ if run_deploy_from_csv_list:
                 ax.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
                 ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
 
-                ax.tick_params(axis='both', labelsize=12)
+                ax.tick_params(axis='both', labelsize=16)
 
             plt.tight_layout()
             #plt.savefig('/home/maffe/Downloads/RGI60-1313574_CCAI.png', dpi=200)
@@ -208,7 +262,15 @@ if run_deploy_from_csv_list:
 
         plot_fancy_ML_Mil_Far_prediction = True
         if plot_fancy_ML_Mil_Far_prediction:
-            fig, (ax1, ax2, ax3) = plt.subplots(1,3, figsize=(15, 6))
+            #fig, (ax1, ax2, ax3) = plt.subplots(1,3, figsize=(15, 6))
+            fig = plt.figure(figsize=(15, 6))
+            gs = GridSpec(1, 4, width_ratios=[1, 1, 1, 0.05])  # Adjust the width ratios
+
+            # Create the axes
+            ax1 = fig.add_subplot(gs[0])
+            ax2 = fig.add_subplot(gs[1])
+            ax3 = fig.add_subplot(gs[2])
+            cax = fig.add_subplot(gs[3])  # Colorbar axis
 
             dx, dy = x1 - x0, y1 - y0
             hillshade = copy.deepcopy(focus)
@@ -235,10 +297,12 @@ if run_deploy_from_csv_list:
                 ax.scatter(x=glathida_rgis['POINT_LON'], y=glathida_rgis['POINT_LAT'], c=glathida_rgis['THICKNESS'],
                                         cmap='jet', ec='grey', lw=0.5, s=35, vmin=vmin, vmax=vmax)
 
-            cbar1 = plt.colorbar(s1, ax=ax1)
-            cbar1.mappable.set_clim(vmin=vmin, vmax=vmax)
+            cbar1 = plt.colorbar(s1, cax=cax)#ax=ax1)
+            cbar1.mappable.set_clim(vmin=vmin, vmax=vmax)#vmax=vmax
             cbar1.set_label('Thickness (m)', labelpad=15, rotation=90, fontsize=16)
-            cbar1.ax.tick_params(labelsize=11)
+            cbar1.ax.tick_params(labelsize=16)#11
+
+            '''
             if not no_millan_data:
                 cbar2 = plt.colorbar(s2, ax=ax2)
                 cbar2.mappable.set_clim(vmin=vmin, vmax=vmax)
@@ -249,6 +313,7 @@ if run_deploy_from_csv_list:
                 cbar3.mappable.set_clim(vmin=vmin, vmax=vmax)
                 cbar3.set_label('Thickness (m)', labelpad=15, rotation=90, fontsize=16)
                 cbar3.ax.tick_params(labelsize=11)
+            '''
 
             for ax in (ax1, ax2, ax3):
                 ax.plot(*exterior_ring.xy, c='k')
@@ -260,9 +325,9 @@ if run_deploy_from_csv_list:
                 ax.spines['right'].set_visible(False)
                 ax.spines['bottom'].set_visible(False)
                 ax.spines['left'].set_visible(False)
-                ax.set_xlabel('Lon ($^{\\circ}$E)', fontsize=14)
-                ax.set_ylabel('Lat ($^{\\circ}$N)', fontsize=14)
-                ax.tick_params(axis='both', labelsize=12)
+                ax.set_xlabel('Lon ($^{\\circ}$E)', fontsize=16)#14
+                ax.set_ylabel('Lat ($^{\\circ}$N)', fontsize=16)#14
+                ax.tick_params(axis='both', labelsize=16)#12
                 #ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False)
 
                 ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
@@ -280,7 +345,7 @@ if run_deploy_from_csv_list:
 
             plt.show()
             #plt.close()
-            exit()
+            #exit()
 
 
 ####################################
@@ -412,4 +477,4 @@ def run_rgi_simulation(rgi=None):
 
 run_rgi_simulation_YN = False
 if run_rgi_simulation_YN:
-    run_rgi_simulation(rgi=4)
+    run_rgi_simulation(rgi=5)
