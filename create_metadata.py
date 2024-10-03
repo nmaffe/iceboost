@@ -5,6 +5,7 @@ import random
 import xarray, rioxarray, rasterio
 import xrspatial.curvature
 import xrspatial.aspect
+import xrspatial.slope
 import argparse
 from rioxarray import merge
 import numpy as np
@@ -22,16 +23,21 @@ from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union, nearest_points
 from pyproj import Transformer, Geod
 from joblib import Parallel, delayed
+from fetch_glacier_metadata import get_rgi_products
 from create_rgi_mosaic_tanxedem import create_glacier_tile_dem_mosaic
-from utils_metadata import from_lat_lon_to_utm_and_epsg, gaussian_filter_with_nans, haversine, lmax_imputer
+#from plot_glacier_features import glacier_rgiid
+#from utils_metadata import (from_lat_lon_to_utm_and_epsg, gaussian_filter_with_nans,
+#                            haversine, lmax_imputer, find_cluster_with_graph, lmax_with_covex_hull)
+from utils_metadata import *
 from imputation_policies import smb_elev_functs, smb_elev_functs_hugo
+import misc as misc
 
 pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', None)
 pd.set_option('display.max_rows', None)
 """
 This program creates a dataframe of metadata for the points in glathida.
-Time all rgis: 293m
+Time all rgis: 239m
 
 1. add_rgi. Time: 1min. TESTED.
 2. add_RGIId_and_OGGM_stats. TESTED. All rgis: 15 min 
@@ -62,8 +68,10 @@ parser.add_argument('--millan_velocity_folder', type=str,default="/media/maffe/n
                     help="Path to Millan velocity data")
 parser.add_argument('--millan_icethickness_folder', type=str,default="/media/maffe/nvme/Millan/thickness/",
                     help="Path to Millan ice thickness data")
-parser.add_argument('--NSIDC_icethickness_folder_Greenland', type=str,default="/media/maffe/nvme/BedMachine_v5/",
+parser.add_argument('--NSIDC_icethickness_folder_Greenland', type=str,default="/media/maffe/nvme/Greenland_NSIDC/thickness/",
                     help="Path to BedMachine v5 Greenland")
+parser.add_argument('--NSIDC_velocity_folder_Greenland', type=str,default="/media/maffe/nvme/Greenland_NSIDC/velocity/",
+                    help="Path to Greenland velocity data")
 parser.add_argument('--NSIDC_velocity_folder_Antarctica', type=str,default="/media/maffe/nvme/Antarctica_NSIDC/velocity/NSIDC-0754/",
                     help="Path to AnIS velocity data")
 parser.add_argument('--NSIDC_icethickness_folder_Antarctica', type=str,default="/media/maffe/nvme/Antarctica_NSIDC/thickness/NSIDC-0756/",
@@ -76,8 +84,9 @@ parser.add_argument('--path_ERA5_t2m_folder', type=str,default="/media/maffe/nvm
 parser.add_argument('--GSHHG_folder', type=str,default="/media/maffe/nvme/gshhg/", help="Path to GSHHG folder")
 parser.add_argument('--save', type=int, default=0, help="Save final dataset or not.")
 parser.add_argument('--save_outname', type=str,
-            default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata35",
+            default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata37",
             help="Saved dataframe name.")
+parser.add_argument('--config', type=str, default="config/config.yaml", help="Path to yaml config file")
 
 
 # Setup oggm
@@ -85,6 +94,7 @@ utils.get_rgi_dir(version='62')
 utils.get_rgi_intersects_dir(version='62')
 
 args = parser.parse_args()
+config = misc.get_config(args.config)  # import from config.yaml
 
 """ Add rgi values """
 def add_rgi(glathida, path_O1_shp):
@@ -98,7 +108,8 @@ def add_rgi(glathida, path_O1_shp):
     glathida['RGI'] = [np.nan]*len(glathida)
     lats = glathida['POINT_LAT']
     lons = glathida['POINT_LON']
-    points = [Point(ilon, ilat) for (ilon, ilat) in zip(lons, lats)]
+    #points = [Point(ilon, ilat) for (ilon, ilat) in zip(lons, lats)] # slower
+    points = list(gpd.points_from_xy(lons, lats)) # faster
 
     # Define the regions
     region1a = world.loc[0]['geometry']
@@ -183,6 +194,7 @@ def add_slopes_elevation(glathida, path_mosaic):
         return glathida
 
     glathida['elevation'] = [np.nan] * len(glathida)
+    glathida['elevation_0_1'] = [np.nan] * len(glathida)
     glathida['slope50'] = [np.nan] * len(glathida)
     glathida['slope75'] = [np.nan] * len(glathida)
     glathida['slope100'] = [np.nan] * len(glathida)
@@ -433,7 +445,8 @@ def add_slopes_elevation(glathida, path_mosaic):
                 aspect_data_af = aspect_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
 
                 # check if any nan in the interpolate data
-                contains_nan = any(np.isnan(arr).any() for arr in [slope_50_data, slope_75_data, slope_100_data,
+                contains_nan = any(np.isnan(arr).any() for arr in [elevation_data,
+                                                                   slope_50_data, slope_75_data, slope_100_data,
                                                                    slope_125_data, slope_150_data, slope_300_data,
                                                                    slope_450_data, slope_af_data,
                                                                    curv_data_50, curv_data_300, curv_data_af,
@@ -541,6 +554,30 @@ def add_slopes_elevation(glathida, path_mosaic):
                                      cmap='viridis', vmin=dz_dlon_filter_xar_300.min(), vmax=dz_dlon_filter_xar_300.max(), zorder=1)
 
                     plt.show()
+
+    # elevation_0_1
+    elevation_0_1 = normalized_elevation(h=glathida['elevation'], Hmin=glathida['zmin'], Hmax=glathida['zmax'])
+    glathida['elevation_0_1'] = elevation_0_1
+
+    #glathida_aletsch = glathida.loc[glathida['RGIId'] == 'RGI60-11.01450']
+    #fig, (ax1, ax2) = plt.subplots(1,2)
+    #s1 = ax1.scatter(x=glathida_aletsch['POINT_LON'], y=glathida_aletsch['POINT_LAT'],
+    #           c=glathida_aletsch['elevation'])
+    #cb1 = plt.colorbar(s1)
+    #s2 = ax2.scatter(x=glathida_aletsch['POINT_LON'], y=glathida_aletsch['POINT_LAT'],
+    #           c=glathida_aletsch['elevation_0_1'])
+    #cb2 = plt.colorbar(s2)
+    #plt.show()
+
+    #elevation_no_nans = glathida['elevation'].isna().sum()
+    #zmin_no_nans = glathida['zmin'].isna().sum()
+    #zmax_no_nans = glathida['zmax'].isna().sum()
+    #zmed_no_nans = glathida['zmed'].isna().sum()
+    #elevation_0_1_no_nans = glathida['elevation_0_1'].isna().sum()
+    #print(np.nanmean(elevation_0_1))
+    #print(len(glathida))
+    #print(elevation_0_1_no_nans, elevation_no_nans, zmin_no_nans, zmax_no_nans, zmed_no_nans)
+
 
     print(f"Slopes and elevation done in {(time.time()-ts)/60} min")
     return glathida
@@ -722,7 +759,7 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
             all_zero_or_nodata = cond0 or condnodata or condnan
 
             if all_zero_or_nodata:
-                tqdm.write(f'{i} Cond 1 triggered - No NSIDC vel data for rgi {rgi} GlaThiDa_ID {id_rgi}')
+                #tqdm.write(f'{i} Cond 1 triggered - No NSIDC vel data for rgi {rgi} GlaThiDa_ID {id_rgi}')
                 continue
 
             # Condition no. 2. A fast and quick interpolation to see if points intercepts a valid raster region
@@ -739,8 +776,9 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
                 #im = vx_NSIDC_focus.plot(ax=ax, cmap='binary', zorder=0)
                 #ax.scatter(x=eastings_id, y=northings_id, s=10, c='r', zorder=1)
                 #plt.show()
-                tqdm.write(f'{i} Cond 2 triggered - No NSIDC vel data for rgi {rgi} GlaThiDa_ID {id_rgi} around'
-                           f' {glathida_id['POINT_LAT'].mean():.2f} lat {glathida_id['POINT_LON'].mean():.2f} lon')
+
+                #tqdm.write(f'{i} Cond 2 triggered - No NSIDC vel data for rgi {rgi} GlaThiDa_ID {id_rgi} around'
+                #           f' {glathida_id['POINT_LAT'].mean():.2f} lat {glathida_id['POINT_LON'].mean():.2f} lon')
                 continue
 
             # At this stage we should have a good interpolation
@@ -1070,8 +1108,8 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
         tqdm.write(f'rgi: {rgi}, Total points: {len(glathida_rgi)}')
 
         # get Millan files
-        file_vx = f"{args.millan_velocity_folder}RGI-{rgi}/greenland_vel_mosaic250_vx_v1.tif"
-        file_vy = f"{args.millan_velocity_folder}RGI-{rgi}/greenland_vel_mosaic250_vy_v1.tif"
+        file_vx = f"{args.NSIDC_velocity_folder_Greenland}greenland_vel_mosaic250_vx_v1.tif"
+        file_vy = f"{args.NSIDC_velocity_folder_Greenland}greenland_vel_mosaic250_vy_v1.tif"
         # files_ith = sorted(glob(f"{args.millan_icethickness_folder}RGI-{rgi}/THICKNESS_RGI-5*")) # we dont use millan
         file_ith_bedmacv5 = f"{args.NSIDC_icethickness_folder_Greenland}BedMachineGreenland-v5.nc"
 
@@ -2080,26 +2118,9 @@ def add_dist_from_boder_using_geometries(glathida):
         return glathida
 
     glathida['dist_from_border_km_geom'] = [np.nan] * len(glathida)
-
-    def add_new_neighbors(neigbords, df):
-        """ I give a list of neighbors and I should return a new list with added neighbors"""
-        for id in neigbords:
-            neighbors_wrt_id = df[df['RGIId_1'] == id]['RGIId_2'].unique()
-            neigbords = np.append(neigbords, neighbors_wrt_id)
-        neigbords = np.unique(neigbords)
-        return neigbords
-
-    def find_cluster_RGIIds(id, df):
-        neighbors0 = np.array([id])
-        len0 = len(neighbors0)
-        neighbors1 = add_new_neighbors(neighbors0, df)
-        len1 = len(neighbors1)
-        while (len1 > len0):
-            len0 = len1
-            neighbors1 = add_new_neighbors(neighbors1, df)
-            len1 = len(neighbors1)
-        if (len(neighbors1)) ==1: return None
-        else: return neighbors1
+    glathida['Cluster_area'] = [np.nan] * len(glathida)
+    glathida['Cluster_glaciers'] = [np.nan] * len(glathida)
+    glathida['Cluster_geometries'] = [np.nan] * len(glathida)
 
     regions = list(range(1, 20))
 
@@ -2118,18 +2139,14 @@ def add_dist_from_boder_using_geometries(glathida):
         #      f"of which {glathida_rgi['RGIId'].isna().sum()} points without a glacier id (hence nan)"
         #      f"and {glathida_rgi['RGIId'].notna().sum()} points with valid glacier id")
 
-        oggm_rgi_shp = utils.get_rgi_region_file(f"{rgi:02d}", version='62')  # get rgi region shp
-        oggm_rgi_intersects_shp = utils.get_rgi_intersects_region_file(f"{rgi:02d}", version='62')
-
-        oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')  # get rgi dataset of glaciers
-        oggm_rgi_intersects = gpd.read_file(oggm_rgi_intersects_shp, engine='pyogrio')  # get rgi dataset of glaciers intersects
+        # Get rgi products
+        rgi_products = get_rgi_products(rgi)
+        oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, _ = rgi_products
 
         # loop over glaciers
         # Note: It is important to note that since rgi_ids do not contain nans, looping over it automatically
         # selects only the points inside glaciers (and not those outside)
         for rgi_id in tqdm(rgi_ids, total=len(rgi_ids), desc=f"Glaciers in rgi {rgi}", leave=False, position=0):
-
-            multipolygon = False
 
             # Get glacier glathida and oggm datasets
             try:
@@ -2141,20 +2158,23 @@ def add_dist_from_boder_using_geometries(glathida):
                 gl_geom_nunataks_list = [Polygon(nunatak) for nunatak in gl_geom.interiors]  # list of nunataks Polygons
                 #print(f"Glacier {rgi_id} found and its {len(glathida_id)} points contained.")
                 assert len(gl_df) == 1, "Check this please."
-                # Get the UTM EPSG code from glacier center coordinates
-                cenLon, cenLat = gl_df['CenLon'].item(), gl_df['CenLat'].item()
-                _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(cenLat, cenLon)
 
             except Exception as e:
                 print(f"Error {e} with glacier {rgi_id}. It was not found so it be skipped.")
                 continue
 
+            # center of glacier and glacier epsg
+            glacier_centroid = gl_geom_ext.centroid
+            glacier_cenLon, glacier_cenLat = glacier_centroid.x, glacier_centroid.y
+            _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(glacier_cenLat, glacier_cenLon)
+
             # intersects of glacier (need only for plotting purposes)
             gl_intersects = oggm.utils.get_rgi_intersects_entities([rgi_id], version='62')
 
             # Calculate intersects of all glaciers in the cluster
-            #todo: replace find_cluster_RGIIds with networkx graph, more precise. See fetch metadata
-            list_cluster_RGIIds = find_cluster_RGIIds(rgi_id, oggm_rgi_intersects)
+            list_cluster_RGIIds = find_cluster_with_graph(rgi_graph, rgi_id, max_depth=config.graph_max_layer_depth)
+            no_glaciers_in_cluster = len(list_cluster_RGIIds)
+            #print(f"Cluster: {no_glaciers_in_cluster} glaciers.")
             #print(f"List of glacier cluster: {list_cluster_RGIIds}")
 
             if list_cluster_RGIIds is not None:
@@ -2162,44 +2182,36 @@ def add_dist_from_boder_using_geometries(glathida):
                 cluster_intersects = oggm.utils.get_rgi_intersects_entities(list_cluster_RGIIds, version='62')
             else: cluster_intersects = None
 
-            # Now calculate the geometries
-            # todo: remove this if-else
-            if list_cluster_RGIIds is None:  # Case 1: isolated glacier
-                #print(f"Isolated glacier")
-                exterior_ring = gl_geom.exterior  # shapely.geometry.polygon.LinearRing
-                interior_rings = gl_geom.interiors  # shapely.geometry.polygon.InteriorRingSequence of polygon.LinearRing
-                geoseries_geometries_4326 = gpd.GeoSeries([exterior_ring] + list(interior_rings), crs="EPSG:4326")
-                geoseries_geometries_epsg = geoseries_geometries_4326.to_crs(epsg=glacier_epsg)
+            # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks) and convert to UTM
+            cluster_geometry_list = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'].isin(list_cluster_RGIIds), 'geometry'].tolist()
+            cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
+            cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'),
+                                                             crs="EPSG:4326")
+            cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
 
-            elif list_cluster_RGIIds is not None:  # Case 2: cluster of glaciers with ice divides
-                #print(f"Cluster of glaciers with ice divides.")
-                cluster_geometry_list = []
-                for gl_neighbor_id in list_cluster_RGIIds:
-                    gl_neighbor_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'] == gl_neighbor_id]
-                    gl_neighbor_geom = gl_neighbor_df['geometry'].item()
-                    cluster_geometry_list.append(gl_neighbor_geom)
+            if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
+                cluster_exterior_ring = [cluster_geometry_no_divides_epsg.item().exterior]
+                cluster_interior_rings = list(cluster_geometry_no_divides_epsg.item().interiors)
+                multipolygon = False
+            elif cluster_geometry_no_divides_epsg.item().geom_type == 'MultiPolygon':
+                polygons = list(cluster_geometry_no_divides_epsg.item().geoms)
+                cluster_exterior_ring = [polygon.exterior for polygon in polygons]
+                num_multipoly = len(cluster_exterior_ring)
+                cluster_interior_ringSequences = [polygon.interiors for polygon in polygons]
+                cluster_interior_rings = [ring for sequence in cluster_interior_ringSequences for ring in sequence]
+                multipolygon = True
+            else:
+                raise ValueError("Unexpected geometry type. Please check.")
 
-                # Combine into a series of all glaciers in the cluster
-                cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
+            geoseries_geometries_epsg = gpd.GeoSeries(cluster_exterior_ring + cluster_interior_rings, crs=glacier_epsg)
+            no_geometries_in_cluster = len(geoseries_geometries_epsg)
+            #print(f"Cluster: {no_geometries_in_cluster} geometries.")
 
-                # Now remove all ice divides
-                # todo: replace .unary_union with .union_all(method='coverage')
-                cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.unary_union, crs="EPSG:4326")
-                cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
-                if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
-                    cluster_exterior_ring = [cluster_geometry_no_divides_epsg.item().exterior]  # shapely.geometry.polygon.LinearRing
-                    cluster_interior_rings = list(cluster_geometry_no_divides_epsg.item().interiors) # shapely.geometry.polygon.LinearRing
-                elif cluster_geometry_no_divides_epsg.item().geom_type == 'MultiPolygon':
-                    polygons = list(cluster_geometry_no_divides_epsg.item().geoms)
-                    cluster_exterior_ring = [polygon.exterior for polygon in polygons] # list of shapely.geometry.polygon.LinearRing
-                    num_multipoly = len(cluster_exterior_ring)
-                    cluster_interior_ringSequences = [polygon.interiors for polygon in polygons] # list of shapely.geometry.polygon.InteriorRingSequence
-                    cluster_interior_rings = [ring for sequence in cluster_interior_ringSequences for ring in sequence] # list of shapely.geometry.polygon.LinearRing
-                    multipolygon = True
-                else: raise ValueError("Unexpected geometry type. Please check.")
-
-                # Create a geoseries of all external and internal geometries (NB I set here the glacier_epsg)
-                geoseries_geometries_epsg = gpd.GeoSeries(cluster_exterior_ring + cluster_interior_rings).set_crs(epsg=glacier_epsg)
+            # Calculate the area of the cluster in km2
+            cluster_exterior_ring_gpd = gpd.GeoSeries([cluster_exterior_ring[0]], crs=glacier_epsg).to_crs("EPSG:4326")
+            area_cluster, perimeter_cluster = Geod(ellps="WGS84").geometry_area_perimeter(cluster_exterior_ring_gpd.iloc[0])
+            area_cluster = abs(area_cluster) * 1e-6  # km^2
+            #print(rgi_id, area_cluster)
 
             # Get all points and create Geopandas geoseries and convert to glacier center UTM
             # Note: a delicate issue is that technically each point may have its own UTM zone.
@@ -2334,6 +2346,7 @@ def add_dist_from_boder_using_geometries(glathida):
                 # Plot
                 #r = random.uniform(0,1)
                 #if (plot_calculate_distance and list_cluster_RGIIds is not None and r<1.0):
+                plot_calculate_distance = False
                 if plot_calculate_distance:
                     fig, (ax1, ax2) = plt.subplots(1, 2)
                     ax1.plot(*gl_geom_ext.exterior.xy, lw=1, c='magenta', zorder=4)
@@ -2407,6 +2420,12 @@ def add_dist_from_boder_using_geometries(glathida):
 
             # Fill dataframe with distances from glacier rgi_id
             glathida.loc[glathida_id.index, 'dist_from_border_km_geom'] = glacier_id_dist
+            glathida.loc[glathida_id.index, 'Cluster_area'] = area_cluster
+            glathida.loc[glathida_id.index, 'Cluster_glaciers'] = no_glaciers_in_cluster
+            glathida.loc[glathida_id.index, 'Cluster_geometries'] = no_geometries_in_cluster
+
+            assert (not np.isnan(area_cluster) and not np.isnan(no_glaciers_in_cluster) and not np.isnan(no_geometries_in_cluster)
+                    and not any(np.isnan(glacier_id_dist))), "NaN found."
 
         tqdm.write(f"Finished region {rgi} in {(time.time()-t_)/60} mins.")
 
@@ -2523,6 +2542,14 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
     glathida['Aspect'] = [np.nan] * len(glathida) # -9 bad values
     glathida['dmdtda_hugo'] = [np.nan] * len(glathida)
 
+    glathida['zmin'] = [np.nan] * len(glathida) # new
+    glathida['zmax'] = [np.nan] * len(glathida) # new
+    glathida['zmed'] = [np.nan] * len(glathida) # new
+    glathida['slope'] = [np.nan] * len(glathida) # new
+    glathida['aspect'] = [np.nan] * len(glathida) # new
+    glathida['curvature'] = [np.nan] * len(glathida) # new
+    glathida['lmax'] = [np.nan] * len(glathida)  # new
+
     # Define this function for the parallelization
     def check_contains(point, geometry):
         return geometry.contains(point)
@@ -2560,15 +2587,21 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
             glacier_zmed = oggm_rgi_glaciers.at[ind, 'Zmed']
             glacier_slope = oggm_rgi_glaciers.at[ind, 'Slope']
             glacier_lmax = oggm_rgi_glaciers.at[ind, 'Lmax']
-            glacier_form = oggm_rgi_glaciers.at[ind, 'Form']
+            glacier_form = oggm_rgi_glaciers.at[ind, 'Form'] # this can be dropped as I don't use it in the model
             glacier_termtype = oggm_rgi_glaciers.at[ind, 'TermType']
             glacier_aspect = oggm_rgi_glaciers.at[ind, 'Aspect']
-            glacier_cenLon = oggm_rgi_glaciers.at[ind, 'CenLon']
-            glacier_cenLat = oggm_rgi_glaciers.at[ind, 'CenLat']
+            #glacier_cenLon = oggm_rgi_glaciers.at[ind, 'CenLon']
+            #glacier_cenLat = oggm_rgi_glaciers.at[ind, 'CenLat']
 
-            # Calculate area and perimeter. Area in km2, perimeter in m.
             glacier_geometry_ext = Polygon(glacier_geometry.exterior)
+            gl_geom_ext_gdf = gpd.GeoDataFrame(geometry=[glacier_geometry_ext], crs="EPSG:4326")
 
+            # calculate glacier center and epsg
+            glacier_centroid = glacier_geometry_ext.centroid
+            glacier_cenLon, glacier_cenLat = glacier_centroid.x, glacier_centroid.y
+            _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(glacier_cenLat, glacier_cenLon)
+
+            # calculate glacier area [km2] and perimeter [m]. Area in km2, perimeter in m.
             glacier_area, perimeter_ice = Geod(ellps="WGS84").geometry_area_perimeter(glacier_geometry)
             area_ice_and_noince, perimeter_ice_and_noice = Geod(ellps="WGS84").geometry_area_perimeter(glacier_geometry_ext)
 
@@ -2615,17 +2648,79 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
             df_poins_in_glacier = df_points_in_bound[mask_points_in_glacier]
             # if no points inside the glacier move on
             if len(df_poins_in_glacier) == 0: continue
-
             #print(f'RGIId {glacier_RGIId} No. point in glacier: {len(df_poins_in_glacier)}')
             # at this point we should have found the points inside the glacier
 
+            # Load DEM for feats calculation
+            deltalat = np.abs(lly - ury)
+            deltalon = np.abs(llx - urx)
+            delta = max(deltalat, deltalon, 0.1)
+            dem_glacier_with_buffer = create_glacier_tile_dem_mosaic(minx=llx - delta,
+                                                   miny=lly - delta,
+                                                   maxx=urx + delta,
+                                                   maxy=ury + delta,
+                                                   rgi=rgi, path_tandemx=args.mosaic)
+            dem_glacier_with_buffer = dem_glacier_with_buffer.squeeze()
+            dem_glacier = dem_glacier_with_buffer.rio.clip([glacier_geometry], "EPSG:4326", drop=True, invert=False, all_touched=True)
+
+            glacier_zmin_with_dem = np.nanmin(dem_glacier.values)
+            glacier_zmax_with_dem = np.nanmax(dem_glacier.values)
+            glacier_zmed_with_dem = np.nanmedian(dem_glacier.values)
+
+            # These two glaciers contain weird Tandem-X low elevation patches. Hardcode minimum vals.
+            if glacier_RGIId == 'RGI60-05.00800':
+                glacier_zmin_with_dem = 34.0
+            if glacier_RGIId == 'RGI60-05.04288':
+                glacier_zmin_with_dem = 0.0
+
+            #if glacier_RGIId in ('RGI60-05.00800', 'RGI60-05.04288'):
+                #print('FOUND', glacier_RGIId, glacier_zmin, glacier_zmin_with_dem)
+                #dem_glacier.plot(cmap='terrain')
+                #plt.show()
+                #input('wait')
+
+            #if (glacier_zmin - glacier_zmin_with_dem)/max(0.1, glacier_zmin) > .1:
+            #    print('min', glacier_RGIId, glacier_zmin, glacier_zmin_with_dem)
+            #if (glacier_zmax - glacier_zmax_with_dem)/glacier_zmax > .1:
+            #    print('max', glacier_RGIId, glacier_zmax, glacier_zmax_with_dem)
+            #if (glacier_zmed - glacier_zmed_with_dem)/glacier_zmed > .1:
+            #    print('med', glacier_RGIId, glacier_zmed, glacier_zmed_with_dem)
+
+            #print(np.sum(~np.isnan(dem_glacier.values)))
+            #print(glacier_zmin, glacier_zmin_with_dem)
+            #print(glacier_zmax, glacier_zmax_with_dem)
+            #print(glacier_zmed, glacier_zmed_with_dem)
+
+            #fig, (ax1, ax2) = plt.subplots(1,2)
+            #dem_glacier_with_buffer.plot(ax=ax1, cmap='terrain')
+            #myPoly = gpd.GeoSeries([glacier_geometry])
+            #myPoly.plot(ax=ax1)
+            #dem_glacier.plot(ax=ax2, cmap='terrain')
+            #plt.show()
+            #input('wait')
+
+            # slope and aspect (mean glacier values)
+            dem_glacier_utm = dem_glacier.rio.reproject(glacier_epsg, resampling=rasterio.enums.Resampling.bilinear)
+            glacier_mean_slope_with_dem = xrspatial.slope(dem_glacier_utm).mean().item()
+            glacier_mean_aspect_with_dem = xrspatial.aspect(dem_glacier_utm).mean().item()
+            glacier_mean_curvature_with_dem = xrspatial.curvature(dem_glacier_utm).mean().item()
+            #print(glacier_RGIId, glacier_cenLon, glacier_cenLat, glacier_mean_curvature_with_dem)
+            #print(glacier_RGIId, glacier_cenLon, glacier_cenLat, glacier_mean_aspect_with_dem, glacier_aspect)
+
+            # lmax
+            glacier_lmax_with_convex_hull = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg)
+            #print(glacier_RGIId, glacier_cenLon, glacier_cenLat, lmax, glacier_lmax)
+
+
             ifplot = False
             if ifplot:
+                print(glacier_RGIId, glacier_cenLon, glacier_cenLat, glacier_lmax_with_convex_hull, glacier_lmax)
                 lats_in_glacier = df_poins_in_glacier['POINT_LAT']
                 lons_in_glacier = df_poins_in_glacier['POINT_LON']
                 fig, ax1 = plt.subplots()
                 s1 = ax1.scatter(x=lons_in_bound, y=lats_in_bound, s=5, c='k')
                 s2 = ax1.scatter(x=lons_in_glacier, y=lats_in_glacier, s=5, c='magenta', zorder=1)
+                ax1.scatter(x=glacier_cenLon, y=glacier_cenLat, s=20, c='b')
                 ax1.plot(*glacier_geometry.exterior.xy, c='magenta')
                 plt.show()
 
@@ -2640,9 +2735,6 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
 
             # Data imputation for glacier_lmax (found needed 6 times in rgi 19)
             if glacier_lmax == -9:
-                gl_geom_ext = Polygon(glacier_geometry.exterior)
-                gl_geom_ext_gdf = gpd.GeoDataFrame(geometry=[gl_geom_ext], crs="EPSG:4326")
-                _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(glacier_cenLat, glacier_cenLon)
                 glacier_lmax = lmax_imputer(gl_geom_ext_gdf, glacier_epsg)
                 #print(glacier_RGIId, glacier_cenLat, glacier_cenLon, glacier_lmax)
 
@@ -2655,7 +2747,10 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
 
             assert not np.any(np.isnan(np.array([glacier_area, glacier_zmin, glacier_zmax,
                                                      glacier_zmed, glacier_slope, glacier_lmax,
-                                                 glacier_form, glacier_termtype, glacier_aspect]))), \
+                                                 glacier_form, glacier_termtype, glacier_aspect,
+                                                 glacier_zmin_with_dem, glacier_zmax_with_dem, glacier_zmed_with_dem,
+                                                 glacier_mean_slope_with_dem, glacier_mean_aspect_with_dem,
+                                                 glacier_mean_curvature_with_dem, glacier_lmax_with_convex_hull]))), \
                 "Found nan in some variables in method add_RGIId_and_OGGM_stats. Check why this value appeared."
 
             # Add to dataframe
@@ -2672,6 +2767,23 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
             glathida.loc[df_poins_in_glacier.index, 'TermType'] = glacier_termtype
             glathida.loc[df_poins_in_glacier.index, 'Aspect'] = glacier_aspect
             glathida.loc[df_poins_in_glacier.index, 'dmdtda_hugo'] = glacier_dmdtda
+
+            # new feats
+            glathida.loc[df_poins_in_glacier.index, 'zmin'] = glacier_zmin_with_dem
+            glathida.loc[df_poins_in_glacier.index, 'zmax'] = glacier_zmax_with_dem
+            glathida.loc[df_poins_in_glacier.index, 'zmed'] = glacier_zmed_with_dem
+            glathida.loc[df_poins_in_glacier.index, 'slope'] = glacier_mean_slope_with_dem
+            glathida.loc[df_poins_in_glacier.index, 'aspect'] = glacier_mean_aspect_with_dem
+            glathida.loc[df_poins_in_glacier.index, 'curvature'] = glacier_mean_curvature_with_dem
+            glathida.loc[df_poins_in_glacier.index, 'lmax'] = glacier_lmax_with_convex_hull
+
+        #fig, (ax1, ax2, ax3) = plt.subplots(1,3)
+        #ax1.scatter(x=glathida['Zmin'], y=glathida['zmin'], s=5)
+        #ax1.scatter(x=glathida['Zmax'], y=glathida['zmax'], s=5)
+        #ax1.scatter(x=glathida['Zmed'], y=glathida['zmed'], s=5)
+        #ax2.scatter(x=glathida['Slope'], y=glathida['slope'], s=5)
+        #ax3.scatter(x=glathida['Lmax'], y=glathida['lmax'], s=5)
+        #plt.show()
 
     return glathida
 
@@ -2867,6 +2979,25 @@ if __name__ == '__main__':
     print(f'Begin Metadata dataset creation !')
     t0 = time.time()
 
+    # Create icebridge training data
+    prepare_icebridge = True
+    if prepare_icebridge:
+        #icebridge = pd.read_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_for_iceboost.parquet')
+        #icebridge = add_rgi(icebridge, args.path_O1Regions_shp)
+        #icebridge = add_RGIId_and_OGGM_stats(icebridge, args.OGGM_folder)
+        #icebridge.to_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet',
+        #                     index=False)
+        icebridge = pd.read_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet')
+        icebridge = add_slopes_elevation(icebridge, args.mosaic)
+        icebridge = add_smb(icebridge, args.RACMO_folder)
+        icebridge = add_millan_vx_vy_ith(icebridge, args.millan_velocity_folder, args.millan_icethickness_folder)
+        icebridge = add_dist_from_boder_using_geometries(icebridge)
+        icebridge = add_dist_from_water(icebridge, args.GSHHG_folder)
+        icebridge = add_farinotti_ith(icebridge, args.farinotti_icethickness_folder)
+        icebridge = add_t2m(icebridge, args.path_ERA5_t2m_folder)
+        icebridge.to_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet', index=False)
+        exit('ADDIO')
+
     #glathida = pd.read_csv(args.path_ttt_csv, low_memory=False)
     #glathida = add_rgi(glathida, args.path_O1Regions_shp)
     #glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
@@ -2879,11 +3010,12 @@ if __name__ == '__main__':
     #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
     #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
 
-    glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'metadata34.csv'), low_memory=False)
-    glathida = add_dist_from_water(glathida, args.GSHHG_folder)
+    # testing
+    glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'metadata37.csv'), low_memory=False)
+    #glathida = add_dist_from_water(glathida, args.GSHHG_folder)
     #glathida = add_smb(glathida, args.RACMO_folder)
     #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
-    #glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
+    glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
     #glathida = add_dist_from_boder_using_geometries(glathida)
     #glathida = add_slopes_elevation(glathida, args.mosaic)
     #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
