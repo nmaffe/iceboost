@@ -20,7 +20,7 @@ model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/'
 model_filename_xgb: 'iceboost_xgb_20240731.json'
 model_filename_cat: 'iceboost_cat_20240731.cbm'
 filename_csv_deploy: 'iceboost_deploy_list_id.csv'
-metadata_csv_file: '/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata35_hmineq0.0_tmin20050000_mean_grid_100.csv'
+metadata_csv_file: '/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata37_hmineq1.0_tmin20050000_mean_grid_100.csv'
 
 # save model
 save_model: 0
@@ -34,7 +34,7 @@ kdtree_dist_max_k_geometries: 99999 # maximum number of geometries considered in
 
 # configs for model inference
 featuresBase: &base ['Area', 'Perimeter', 'Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'Aspect', 'TermType',
-                     'elevation', 'elevation_from_zmin', 'dist_from_border_km_geom',
+                     'elevation', 'elevation_from_Zmin', 'dist_from_border_km_geom',
                      'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
                      'curv_50', 'curv_300', 'curv_gfa', 'dmdtda_hugo', 'deltaZ',
                      'smb', 't2m', 'dist_from_ocean']
