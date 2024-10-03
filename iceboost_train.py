@@ -1,10 +1,13 @@
 import argparse, time
 import random
+
+from pandas.core.common import random_state
 from tqdm import tqdm
 import copy, math
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator, FormatStrFormatter
+from matplotlib.gridspec import GridSpec
 import pandas as pd
 import earthpy.spatial
 import geopandas as gpd
@@ -22,21 +25,18 @@ import xgboost as xgb
 import catboost as cb
 import optuna
 import shap
-from fetch_glacier_metadata import populate_glacier_with_metadata, get_oggm_rgi_products
+from fetch_glacier_metadata import populate_glacier_with_metadata, get_rgi_products, get_coastline_dataframe
 from create_rgi_mosaic_tanxedem import create_glacier_tile_dem_mosaic
-from utils_metadata import calc_volume_glacier, get_random_glacier_rgiid, create_train_test, get_cmap
+from utils_metadata import *
+import misc as misc
+from joblib import Parallel, delayed
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--metadata_file', type=str, default="/media/maffe/nvme/glathida/glathida-3.1.0/"
-                        +"glathida-3.1.0/data/metadata35_hmineq0.0_tmin20050000_mean_grid_100.csv", help="Training dataset.")
-parser.add_argument('--farinotti_icethickness_folder', type=str,default="/media/maffe/nvme/Farinotti/composite_thickness_RGI60-all_regions/",
-                    help="Path to Farinotti ice thickness data")
-parser.add_argument('--mosaic', type=str,default="/media/maffe/nvme/Tandem-X-EDEM/", help="Path to Tandem-X-EDEM")
-parser.add_argument('--oggm', type=str,default="/home/maffe/OGGM/", help="Path to OGGM folder")
-parser.add_argument('--save_model', type=int, default=0, help="Save the model")
-parser.add_argument('--save_outdir', type=str, default="/home/maffe/PycharmProjects/iceboost/saved_iceboost/", help="Saved model dir.")
-
+parser.add_argument('--config', type=str, default="config/config.yaml", help="Path to yaml config file")
 args = parser.parse_args()
+
+config = misc.get_config(args.config)  # import from config.yaml
+
 utils.get_rgi_dir(version='62')
 
 def custom_loss(elevation):
@@ -57,25 +57,29 @@ def xgb_custom_obj(elevation):
 
 class CFG:
     features_not_used = ['Form', 'sia', 'RGI', 'lats', 'Area_icefree', 'aspect_50', 'aspect_300', 'aspect_gfa', 'Form'
-                         ]
+                         'Slope', 'Lmax', 'Aspect', 'Cluster_glaciers', 'Cluster_geometries',
+                         'Zmin', 'Zmax', 'Zmed', 'elevation_from_Zmin', 'deltaZ']
 
-    featuresSmall = ['Area',  'Perimeter', 'Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'Aspect',  'TermType',
+    featuresSmall = ['Area',  'Perimeter', 'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax', 'TermType',
                 'elevation', 'elevation_from_zmin', 'dist_from_border_km_geom',
                    'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
-                 'curv_50', 'curv_300', 'curv_gfa', 'dmdtda_hugo',  'deltaZ',
-                     'smb', 't2m', 'dist_from_ocean', ]
+                 'curv_50', 'curv_300', 'curv_gfa', 'dmdtda_hugo',  'deltaz',
+                     'smb', 't2m', 'dist_from_ocean', 'Cluster_area', 'elevation_0_1']
     featuresBig = featuresSmall + ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa', ]
 
     feature_human_names = {
         'Area': 'Area', 'Zmin': r'H$_{min}$', 'Zmax': r'H$_{max}$', 'Zmed': r'H$_{med}$', 'Slope': 'Slope', 'Lmax': 'Lmax',
-        'Form': 'Form', 'TermType': 'TermType', 'Aspect': 'Aspect', 'elevation': 'h', 'elevation_from_zmin': r'h-H$_{min}$',
+        'Form': 'Form', 'TermType': 'TermType', 'Aspect': 'Aspect', 'elevation': 'h', 'elevation_from_Zmin': r'h-H$_{min}$',
         'dist_from_border_km_geom': r'd$_{noice}$', 'slope50': r's$_{50}$', 'slope75': r's$_{75}$', 'slope100': r's$_{100}$',
         'slope125': r's$_{125}$', 'slope150': r's$_{150}$', 'slope300': r's$_{300}$', 'slope450': r's$_{450}$',
         'slopegfa': r's$_{gfa}$', 'curv_50': r'c$_{50}$',
         'curv_300': r'c$_{300}$', 'curv_gfa': r'c$_{gfa}$', 'aspect_50': r'a$_{50}$', 'aspect_300': r'a$_{300}$', 'aspect_gfa': r'a$_{gfa}$',
         'dmdtda_hugo': 'MB', 'smb': 'mb', 't2m': 't2m', 'v50': r'v$_{50}$', 'v100': r'v$_{100}$', 'v150': r'v$_{150}$',
         'v300': r'v$_{300}$', 'v450': r'v$_{450}$', 'vgfa': r'v$_{gfa}$', 'Area_icefree': 'Area icefree', 'Perimeter': 'Perimeter',
-        'deltaZ': r'$\Delta$H', 'RGI': 'RGI', 'dist_from_ocean': r'd$_{ocean}$'
+        'deltaZ': r'$\Delta$H', 'RGI': 'RGI', 'dist_from_ocean': r'd$_{ocean}$', 'zmin': r'h$_{min}$', 'zmax': r'h$_{max}$', 'zmed': r'h$_{med}$',
+        'slope': 'slope', 'aspect': 'aspect', 'curvature': 'curvature', 'lmax': 'lmax', 'curvature': 'curvature',
+        'Cluster_area': r'A$_{cluster}$', 'Cluster_glaciers': r'Cluster$_{glaciers}$', 'Cluster_geometries': r'Cluster$_{geoms}$',
+        'elevation_0_1': r'h$_{0-1}$', 'deltaz': r'$\Delta$h', 'elevation_from_zmin': r'h-h$_{min}$',
     }
 
     target = 'THICKNESS'
@@ -102,29 +106,25 @@ class CFG:
         #'l2_leaf_reg': 74.48
     }
 
-    n_rounds = 3
+    n_rounds = 1
     n_points_regression = 30000
     run_umap_tsne = False
     run_shap = False
     features = featuresBig
 
 # Import the training dataset
-glathida_rgis = pd.read_csv(args.metadata_file, low_memory=False)
+glathida_rgis = pd.read_csv(config.metadata_csv_file, low_memory=False)
 glathida_rgis.loc[glathida_rgis['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
-#glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-19.01406'])] # suspeciously high measurements
+#glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-03.01517'])]
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-01.13696'])] # Malaspina
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-05.10315'])] # Flade Isblink ice cap
+#glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-19.01406'])] # suspeciously high measurements
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-05.13726'])]
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-03.02442'])]
-#glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-03.01517'])]
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-03.02467'])]
+#glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-05.04255'])]
+#glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-05.04288'])]
 
-#glathida_rgis_specific = glathida_rgis.loc[glathida_rgis['RGI'] == 1]
-#fig, ax = plt.subplots()
-#s = ax.scatter(x=glathida_rgis_specific['POINT_LON'], y=glathida_rgis_specific['POINT_LAT'],
-#               c=glathida_rgis_specific['THICKNESS'], s=50, cmap='jet')
-#cbar = plt.colorbar(s)
-#plt.show()
 
 # Regional statistics for Millan and Farinotti
 calc_regional_stats_millan_and_farinotti = False
@@ -140,8 +140,25 @@ if calc_regional_stats_millan_and_farinotti:
 
 # Add some features
 glathida_rgis['lats'] = glathida_rgis['POINT_LAT']
-glathida_rgis['elevation_from_zmin'] = glathida_rgis['elevation'] - glathida_rgis['Zmin']
+glathida_rgis['elevation_from_Zmin'] = glathida_rgis['elevation'] - glathida_rgis['Zmin']
 glathida_rgis['deltaZ'] = glathida_rgis['Zmax'] - glathida_rgis['Zmin']
+# new
+glathida_rgis['elevation_from_zmin'] = glathida_rgis['elevation'] - glathida_rgis['zmin']
+glathida_rgis['deltaz'] = glathida_rgis['zmax'] - glathida_rgis['zmin']
+
+
+# = glathida_rgis.loc[(glathida_rgis['zmin']>0) & (glathida_rgis['zmin']<200)
+#                                          & (glathida_rgis['Zmin']<1100) & (glathida_rgis['Zmin']>800)]
+#print(glathida_rgis_inspect['RGIId'].unique())
+#data_RGI60_0504288 = glathida_rgis.loc[glathida_rgis['RGIId']=='RGI60-05.00800']
+#print(data_RGI60_0504288['zmax'].mean())
+#print(data_RGI60_0504288['Zmax'].mean())
+#print(data_RGI60_0504288['POINT_LAT'].mean())
+#print(data_RGI60_0504288['POINT_LON'].mean())
+
+#fig, ax = plt.subplots()
+#ax.scatter(x=glathida_rgis['Zmin'], y=glathida_rgis['zmin'], s=3)
+#plt.show()
 
 # Remove nans (if any)
 glathida_rgis = glathida_rgis.dropna(subset=CFG.features + ['THICKNESS'])
@@ -345,8 +362,11 @@ for i in range(CFG.n_rounds):
     # Shap Analysis
     if CFG.run_shap:
 
-        explainer = shap.explainers.GPUTree(model, X_test)
-        shap_values = explainer(X_test.sample(2000), check_additivity=False)
+        '''Note: for reproducibility set seed=42 in create_train_test() and also random_state=42 below'''
+
+        #explainer = shap.explainers.GPUTree(model, X_test)
+        explainer = shap.explainers.GPUTree(model_xgb, X_test)
+        shap_values = explainer(X_test.sample(2000, random_state=42), check_additivity=False)
 
         list_new_feature_names = [CFG.feature_human_names.get(col) for col in X_test.columns]
 
@@ -357,12 +377,12 @@ for i in range(CFG.n_rounds):
         shap.plots.beeswarm(shap_values, max_display=len(CFG.features), color=get_cmap('black_electric_green'), show=False)#len(CFG.features) plt.get_cmap('winter')
         cbar = fig.axes[-1]
         cbar.set_ylabel('Feature value', fontsize=16, color='grey')
-        cbar.tick_params(labelsize=14)
-        cbar.tick_params(labelsize=14, colors='grey')
+        cbar.tick_params(labelsize=16, colors='grey')
 
         # Set the y-axis labels font size
-        ax.set_yticklabels(ax.get_yticklabels(), fontsize=16, color='grey')
-        ax.set_xticklabels(ax.get_xticklabels(), fontsize=12, color='grey')
+        ax.tick_params(axis='y', labelsize=18, labelcolor='grey')
+        ax.tick_params(axis='x', labelsize=16, labelcolor='grey')
+
         ax.set_xlabel('SHAP value', fontsize=16, color='grey')#ax.get_xlabel()
 
         for line in ax.lines: line.set_color('k')
@@ -384,14 +404,15 @@ for i in range(CFG.n_rounds):
             all_feature_names = np.array(list_new_feature_names)[sorted_indices]
 
             # Plotting all features as a bar chart
-            fig, ax = plt.subplots(figsize=(8, 8))
+            fig, ax = plt.subplots(figsize=(8, 10))
             bars = ax.barh(all_feature_names, all_shap_values.mean(axis=0), color='grey', alpha=0.3)
 
             ax.invert_yaxis()  # Invert y-axis to show highest importance at the top
-
-            ax.set_yticklabels(all_feature_names, fontsize=14, color='grey')
             ax.set_xlabel('Mean |SHAP Value|', fontsize=16)
-            ax.tick_params(axis='x', labelsize=14)
+
+            ax.set_yticks(range(len(all_feature_names)))  # Set the y-tick positions
+            ax.set_yticklabels(all_feature_names, fontsize=18, color='grey')  # Set the y-tick labels
+            ax.tick_params(axis='x', labelsize=16)
 
             ax.set_ylim(ax.get_ylim()[0] - 1, ax.get_ylim()[1] + 1)
 
@@ -436,10 +457,10 @@ print(f"Rmse {100*(np.nanmean(rmses_Far)-np.nanmean(rmses_ML))/np.nanmean(rmses_
 
 print(f"At the end of cv the best rmse is {best_rmse}")
 
-if args.save_model:
+if config.save_model:
     date_n_time = time.strftime("%Y%m%d", time.localtime())
-    fileout_xgb = f"{args.save_outdir}iceboost_xgb_{date_n_time}.json"
-    fileout_cat = f"{args.save_outdir}iceboost_cat_{date_n_time}.cbm"
+    fileout_xgb = f"{config.model_input_dir}iceboost_xgb_{date_n_time}.json"
+    fileout_cat = f"{config.model_input_dir}iceboost_cat_{date_n_time}.cbm"
     best_model_xgb.save_model(fileout_xgb)
     best_model_cat.save_model(fileout_cat, format="cbm")
     print(f'saved models {fileout_xgb} and {fileout_cat}')
@@ -497,7 +518,7 @@ if plot_spatial_test_predictions:
     glacier_geometries = []
     for glacier_name in test_glaciers_names:
         rgi = glacier_name[6:8]
-        oggm_rgi_shp = glob(f"{args.oggm}rgi/RGIV62/{rgi}*/{rgi}*.shp")[0]
+        oggm_rgi_shp = glob(f"{config.oggm_dir}rgi/RGIV62/{rgi}*/{rgi}*.shp")[0]
         oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
         glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'] == glacier_name]['geometry'].item()
         # print(glacier_geometry)
@@ -544,7 +565,9 @@ if plot_spatial_test_predictions:
 # *********************************************
 # Model deploy
 # *********************************************
-glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-03.01517', rgi=7, area=30, seed=None)
+glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-04.04988', rgi=5, area=100, seed=None)
+# RGI60-01.13696
+# RGI60-19.00748 molto bello
 # 'RGI60-13.37753', RGI60-13.43528 RGI60-13.54431
 # glacier_name_for_generation = 'RGI60-07.00228' #RGI60-07.00027 'RGI60-11.01450' RGI60-07.00552,
 # glacier_name_for_generation = 'RGI60-07.00832' very nice
@@ -581,17 +604,24 @@ glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-03.01517', rg
 # high frequency features in 'RGI60-14.16214' or RGI60-15.04541 RGI60-16.00244 RGI60-16.00776 RGI60-18.02210
 # Probably caused by some features, check curv_50 or elevation
 
-# check if RGI60-06.00475 and RGI60-06.00481 blend together
 
 # Generate points for one glacier
 test_glacier_rgi = glacier_name_for_generation[6:8]
-oggm_rgi_products = get_oggm_rgi_products(test_glacier_rgi)
+rgi_products = get_rgi_products(test_glacier_rgi)
+coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
+
+
 test_glacier = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation,
-                                              n=CFG.n_points_regression,
-                                              k_max_geoms=config.kdtree_dist_max_k_geometries,
-                                              oggm_rgi_products=oggm_rgi_products,
-                                              seed=42,
-                                              verbose=True)
+                                                      config=config,
+                                                      rgi_products=rgi_products,
+                                                      coastlines_dataframe=coastline_dataframe,
+                                                      seed=42,
+                                                      verbose=True)
+
+h_wgs84 = test_glacier['elevation'].to_numpy()
+lats = test_glacier['lats'].to_numpy()
+lons = test_glacier['lons'].to_numpy()
+h_egm2008 = calc_geoid_heights(lons=lons, lats=lats, h_wgs84=h_wgs84)
 
 
 #fig, (ax1, ax2, ax3) = plt.subplots(1,3)
@@ -625,11 +655,13 @@ bedrock_elevations_Millan = test_glacier['elevation'] - y_test_glacier_m
 bedrock_elevations_Far = test_glacier['elevation'] - y_test_glacier_f
 
 # Begin to extract all necessary things to plot the result
-oggm_rgi_shp = glob(f"{args.oggm}rgi/RGIV62/{test_glacier_rgi}*/{test_glacier_rgi}*.shp")[0]
+oggm_rgi_shp = glob(f"{config.oggm_dir}rgi/RGIV62/{test_glacier_rgi}*/{test_glacier_rgi}*.shp")[0]
 oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
 glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name_for_generation]['geometry'].item()
 glacier_area = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name_for_generation]['Area'].item()
 exterior_ring = glacier_geometry.exterior  # shapely.geometry.polygon.LinearRing
+x0, y0, x1, y1 = exterior_ring.bounds
+dx, dy = x1 - x0, y1 - y0
 glacier_nunataks_list = [nunatak for nunatak in glacier_geometry.interiors]
 
 swlat = test_glacier['lats'].min()
@@ -643,29 +675,31 @@ focus_mosaic_tiles = create_glacier_tile_dem_mosaic(minx=swlon - (deltalon + eps
                             miny=swlat - (deltalat + eps),
                             maxx=nelon + (deltalon + eps),
                             maxy=nelat + (deltalat + eps),
-                             rgi=test_glacier_rgi, path_tandemx=args.mosaic)
+                             rgi=test_glacier_rgi, path_tandemx=config.tandemx_dir)
 focus = focus_mosaic_tiles.squeeze()
 
 
 # Get Farinotti file and calculate the volume
 if not no_farinotti_data:
-    test_glacier_folder_farinotti = glob(f"{args.farinotti_icethickness_folder}/*{test_glacier_rgi}/")[0]
+    test_glacier_folder_farinotti = glob(f"{config.farinotti_icethickness_dir}/*{test_glacier_rgi}/")[0]
     ice_farinotti = rioxarray.open_rasterio(test_glacier_folder_farinotti+glacier_name_for_generation+'_thickness.tif')
     res_farinotti = ice_farinotti.rio.resolution()[0]
-    vol_farinotti = 1.e-9 * (res_farinotti ** 2) * np.nansum(ice_farinotti.values) # Volume Farinotti km3
+    vol_farinotti_published = 1.e-9 * (res_farinotti ** 2) * np.nansum(ice_farinotti.values) # Volume Farinotti km3
 else:
     print(f"Farinotti glacier {glacier_name_for_generation} not found in OGGM V62 database.")
-    vol_farinotti = np.nan
+    vol_farinotti_published = np.nan
 
 # Calculate the glacier volume using the 3 models
-vol_ML = calc_volume_glacier(y_preds_glacier, glacier_area)
-vol_millan = calc_volume_glacier(y_test_glacier_m, glacier_area)
-vol_farinotti2 = calc_volume_glacier(y_test_glacier_f, glacier_area)
+vol_ML, _, _ = calc_volume_glacier(y1=y_preds_glacier_xgb, y2=y_preds_glacier_cat,
+                                                 area=glacier_area, h_egm2008=h_egm2008)
+vol_millan = calc_volume_glacier(y1=y_test_glacier_m, area=glacier_area)
+vol_farinotti = calc_volume_glacier(y1=y_test_glacier_f, area=glacier_area)
+
 print(f"Glacier {glacier_name_for_generation} Area: {glacier_area:.2f} km2, "
       f"volML: {vol_ML:.4g} km3 "
       f"volMil: {vol_millan:.4g} km3 "
-      f"volFar: {vol_farinotti:.4g} km3 volFar2: {vol_farinotti2:.4g} km3"
-      f"Far mismatch {100*abs(vol_farinotti2-vol_farinotti)/vol_farinotti:.2f}%")
+      f"volFar: {vol_farinotti:.4g} km3 volFar published: {vol_farinotti_published:.4g} km3"
+      f"Far mismatch {100*abs(vol_farinotti-vol_farinotti_published)/vol_farinotti_published:.2f}%")
 
 print(f"No. points: {len(y_preds_glacier)} no. positive preds {100*np.sum(y_preds_glacier > 0)/len(y_preds_glacier):.1f}")
 
@@ -698,7 +732,7 @@ if create_tif_file:
     plt.imshow(z_grid, cmap='jet')
     plt.show()
 
-plot_fancy_ML_prediction = True
+plot_fancy_ML_prediction = False
 if plot_fancy_ML_prediction:
     fig, ax = plt.subplots(figsize=(8,6))
 
@@ -744,9 +778,15 @@ if plot_fancy_ML_prediction:
 
 plot_fancy_ML_Mil_Far_prediction = True
 if plot_fancy_ML_Mil_Far_prediction:
-    fig, (ax1, ax2, ax3) = plt.subplots(1,3, figsize=(15, 6))
+    fig = plt.figure(figsize=(15, 6))
+    gs = GridSpec(1, 4, width_ratios=[1, 1, 1, 0.05])  # Adjust the width ratios
 
-    x0, y0, x1, y1 = exterior_ring.bounds
+    # Create the axes
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1])
+    ax3 = fig.add_subplot(gs[2])
+    cax = fig.add_subplot(gs[3])  # Colorbar axis
+
     dx, dy = x1 - x0, y1 - y0
     hillshade = copy.deepcopy(focus)
     hillshade.values = earthpy.spatial.hillshade(focus, azimuth=315, altitude=0)
@@ -756,12 +796,12 @@ if plot_fancy_ML_Mil_Far_prediction:
     im2 = hillshade.plot(ax=ax2, cmap='grey', alpha=0.9, zorder=0, add_colorbar=False)
     im3 = hillshade.plot(ax=ax3, cmap='grey', alpha=0.9, zorder=0, add_colorbar=False)
 
-    s1 = ax1.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=2, c=y_preds_glacier, cmap='jet', label='ML', vmin=vmin, vmax=vmax)
+    s1 = ax1.scatter(x=lons, y=lats, s=2, c=y_preds_glacier, cmap='jet', label='ML', vmin=vmin, vmax=vmax)
     if not no_millan_data:
-        s2 = ax2.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=2, c=y_test_glacier_m, cmap='jet',
+        s2 = ax2.scatter(x=lons, y=lats, s=2, c=y_test_glacier_m, cmap='jet',
                          label='Millan', vmin=vmin, vmax=vmax)
     if not no_farinotti_data:
-        s3 = ax3.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=2, c=y_test_glacier_f, cmap='jet',
+        s3 = ax3.scatter(x=lons, y=lats, s=2, c=y_test_glacier_f, cmap='jet',
                          label='Farinotti', vmin=vmin, vmax=vmax)
 
     ax1.set_title(f"IceBoost: {vol_ML:.4g} km$^3$", fontsize=16)
@@ -772,10 +812,12 @@ if plot_fancy_ML_Mil_Far_prediction:
         ax.scatter(x=glathida_rgis['POINT_LON'], y=glathida_rgis['POINT_LAT'], c=glathida_rgis['THICKNESS'],
                                 cmap='jet', ec='grey', lw=0.5, s=35, vmin=vmin, vmax=vmax)
 
-    cbar1 = plt.colorbar(s1, ax=ax1)
-    cbar1.mappable.set_clim(vmin=vmin, vmax=vmax)
+    cbar1 = plt.colorbar(s1, cax=cax)#ax=ax1)
+    cbar1.mappable.set_clim(vmin=vmin, vmax=vmax)#900
     cbar1.set_label('Thickness (m)', labelpad=15, rotation=90, fontsize=16)
-    cbar1.ax.tick_params(labelsize=11)
+    cbar1.ax.tick_params(labelsize=16)#11
+
+    '''
     if not no_millan_data:
         cbar2 = plt.colorbar(s2, ax=ax2)
         cbar2.mappable.set_clim(vmin=vmin, vmax=vmax)
@@ -786,6 +828,7 @@ if plot_fancy_ML_Mil_Far_prediction:
         cbar3.mappable.set_clim(vmin=vmin, vmax=vmax)
         cbar3.set_label('Thickness (m)', labelpad=15, rotation=90, fontsize=16)
         cbar3.ax.tick_params(labelsize=11)
+    '''
 
     for ax in (ax1, ax2, ax3):
         ax.plot(*exterior_ring.xy, c='k')
@@ -797,9 +840,9 @@ if plot_fancy_ML_Mil_Far_prediction:
         ax.spines['right'].set_visible(False)
         ax.spines['bottom'].set_visible(False)
         ax.spines['left'].set_visible(False)
-        ax.set_xlabel('Lon ($^{\\circ}$E)', fontsize=14)
-        ax.set_ylabel('Lat ($^{\\circ}$N)', fontsize=14)
-        ax.tick_params(axis='both', labelsize=12)
+        ax.set_xlabel('Lon ($^{\\circ}$E)', fontsize=16)#14
+        ax.set_ylabel('Lat ($^{\\circ}$N)', fontsize=16)#14
+        ax.tick_params(axis='both', labelsize=16)#12
         #ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False)
 
         ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
@@ -810,54 +853,6 @@ if plot_fancy_ML_Mil_Far_prediction:
     ax2.axis('off')
     ax3.axis('off')
 
-    #fig.suptitle(f'{glacier_name_for_generation}', fontsize=13)
     plt.tight_layout()
+    #plt.savefig(f"{config.model_output_results_dir}{glacier_name_for_generation}.png", dpi=100)
     plt.show()
-
-
-
-# Plot comparison between ML, Millan and Farinotti
-fig, (ax1, ax2, ax3) = plt.subplots(1,3, figsize=(8,4))
-s1 = ax1.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=2, c=y_preds_glacier, cmap='jet', label='ML')
-if not no_millan_data:
-    s2 = ax2.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=2, c=y_test_glacier_m, cmap='jet',
-                     label='Millan')
-if not no_farinotti_data:
-    s3 = ax3.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=2, c=y_test_glacier_f, cmap='jet', label='Farinotti')
-
-ax1.set_title(f"ML {vol_ML:.4g} km3")
-ax2.set_title(f"Millan {vol_millan:.4g} km3")
-ax3.set_title(f"Farinotti {vol_farinotti:.4g} km3")
-
-cbar1 = plt.colorbar(s1, ax=ax1)
-cbar1.mappable.set_clim(vmin=y_min,vmax=y_max)
-cbar1.set_label('Thickness (m)', labelpad=15, rotation=270)
-if not no_millan_data:
-    cbar2 = plt.colorbar(s2, ax=ax2)
-    cbar2.mappable.set_clim(vmin=y_min, vmax=y_max)
-    cbar2.set_label('Thickness (m)', labelpad=15, rotation=270)
-if not no_farinotti_data:
-    cbar3 = plt.colorbar(s3, ax=ax3)
-    cbar3.mappable.set_clim(vmin=y_min,vmax=y_max)
-    cbar3.set_label('Thickness (m)', labelpad=15, rotation=270)
-
-for ax in (ax1, ax2, ax3):
-    ax.plot(*exterior_ring.xy, c='k')
-    for nunatak in glacier_nunataks_list:
-        ax.plot(*nunatak.xy, c='k', lw=0.8)
-
-    #ax.legend(fontsize=14, loc='upper left')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.spines['left'].set_visible(False)
-
-    ax.tick_params(axis='both', which='both', bottom=False, top=False, left=False, right=False)
-
-    #ax.axis("off")
-#ax4.set_title("")
-#ax4.axis("off")
-
-fig.suptitle(f'{glacier_name_for_generation}', fontsize=13)
-plt.tight_layout()
-plt.show()
