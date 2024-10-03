@@ -2,6 +2,7 @@ import utm
 import scipy
 import random
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 from pyproj import Transformer
 from sklearn.neighbors import KDTree
@@ -309,3 +310,24 @@ def find_cluster_with_graph(graph, start_node, max_depth=None):
                 nodes_to_visit.append((neighbor, current_depth + 1))
 
     return list(nodes_at_depth)
+
+def normalized_elevation(h, Hmin, Hmax):
+    '''
+    :param h: elevation (accepted types are scalar, numpy array or pandas series)
+    :param Hmin: glacier minimum elevation
+    :param Hmax: glacier maximum elevation
+    :return: normalized height 0 to 1
+    '''
+    h_np = np.asarray(h)  # Convert h to a NumPy array
+    if np.all(Hmin == Hmax): # handles scalars and arrays
+        result = np.zeros_like(h_np)
+    else:
+        result = np.clip((h_np - Hmin) / (Hmax - Hmin), 0, 1)
+
+    # Handle return type for different types of h
+    if isinstance(h, (np.ndarray, pd.Series)):
+        return result.astype(h.dtype)
+    elif isinstance(h, list):
+        return result.tolist()
+    else:
+        return float(result)
