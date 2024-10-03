@@ -30,6 +30,7 @@ from functools import partial
 from create_rgi_mosaic_tanxedem import fetch_dem, create_glacier_tile_dem_mosaic
 from utils_metadata import *
 from imputation_policies import smb_elev_functs, smb_elev_functs_hugo, velocity_median_rgi
+import misc as misc
 
 pd.set_option('display.max_colwidth', None)
 pd.set_option('display.width', None)
@@ -161,7 +162,7 @@ def populate_glacier_with_metadata(glacier_name,
     #points_df['Zmax'] = gl_df['Zmax'].item() # we use tandemx for this
     #points_df['Zmed'] = gl_df['Zmed'].item() # we use tandemx for this
     points_df['Slope'] = gl_df['Slope'].item()
-    points_df['Lmax'] = gl_df['Lmax'].item() #todo: to be replaced with lmax_with_covex_hull !
+    points_df['Lmax'] = gl_df['Lmax'].item()
     #points_df['Form'] = gl_df['Form'].item() # not used anymore
     points_df['TermType'] = gl_df['TermType'].item()
     points_df['Aspect'] = gl_df['Aspect'].item()
@@ -180,6 +181,8 @@ def populate_glacier_with_metadata(glacier_name,
     points_df['Area'] = glacier_area            # km^2
     points_df['Perimeter'] = perimeter_ice      # m
     points_df['Area_icefree'] = area_noice      # unitless
+
+    points_df['lmax'] = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg)
 
     # Data imputation for lmax (needed for sure for rgi 1 mostly)
     if gl_df['Lmax'].item() == -9:
@@ -1299,6 +1302,36 @@ def populate_glacier_with_metadata(glacier_name,
     t1_reproj_dem = time.time()
     print(f"Time to reproject dem: {t1_reproj_dem - t0_reproj_dem}") if verbose else None
 
+    # Get the glacier geometry in utm
+    gl_geom_gdf_utm = gpd.GeoDataFrame(geometry=[gl_geom], crs="EPSG:4326").to_crs(epsg=glacier_epsg)
+    gl_geom_utm_polygon = gl_geom_gdf_utm.geometry.iloc[0]
+
+    # Clip the DEM in utm with the glacier geometry also in utm
+    dem_glacier_utm = focus_utm.rio.clip([gl_geom_utm_polygon], glacier_epsg, drop=True, invert=False, all_touched=True)
+
+    # Calculate glacier mean slope, aspect, curvature
+    glacier_mean_slope_with_dem = xrspatial.slope(dem_glacier_utm).mean().item()
+    glacier_mean_aspect_with_dem = xrspatial.aspect(dem_glacier_utm).mean().item()
+    glacier_mean_curvature_with_dem = xrspatial.curvature(dem_glacier_utm).mean().item()
+
+    points_df['slope'] = glacier_mean_slope_with_dem
+    points_df['aspect'] = glacier_mean_aspect_with_dem
+    points_df['curvature'] = glacier_mean_curvature_with_dem
+
+    glacier_zmin_with_dem = np.nanmin(dem_glacier_utm.values)
+    glacier_zmax_with_dem = np.nanmax(dem_glacier_utm.values)
+    glacier_zmed_with_dem = np.nanmedian(dem_glacier_utm.values)
+
+    points_df['zmin'] = glacier_zmin_with_dem
+    points_df['zmax'] = glacier_zmax_with_dem
+    points_df['zmed'] = glacier_zmed_with_dem
+
+    #print(type(gl_geom_gdf_utm), type(gl_geom_utm_polygon), glacier_epsg)
+    #print(glacier_mean_slope_with_dem, glacier_mean_aspect_with_dem,
+    #      gl_df['Slope'].item(), gl_df['Aspect'].item(), glacier_mean_curvature_with_dem, )
+    #dem_glacier_utm.plot(cmap='terrain')
+    #plt.show()
+
     # Calculate the resolution in meters of the utm focus (resolutions in x and y are the same!)
     res_utm_metres = focus_utm.rio.resolution()[0]
 
@@ -1505,7 +1538,7 @@ def populate_glacier_with_metadata(glacier_name,
     curv_50 = xrspatial.curvature(focus_filter_xarray_50_utm)
     curv_300 = xrspatial.curvature(focus_filter_xarray_300_utm)
     curv_af = xrspatial.curvature(focus_filter_xarray_af_utm)
-    # todo: aspect calculate using DEM instead of importing from OGGM ?
+
     #ttest0 = time.time()
     #aspect_rad = np.arctan2(dz_dlat_np_50, dz_dlon_np_50)
     #aspect_deg = np.degrees(aspect_rad)
@@ -1580,6 +1613,9 @@ def populate_glacier_with_metadata(glacier_name,
     if contains_nan:
         raise ValueError(f"Nan detected in elevation/slope calc. Check")
 
+    # Add elevation min-max scaled to 0-1
+    elevation_0_1 = normalized_elevation(h=elevation_data, Hmin=glacier_zmin_with_dem, Hmax=glacier_zmax_with_dem)
+
     # Fill zmin, zmax, zmed using tandemx interpolated elevation data
     points_df['Zmin'] = np.min(elevation_data)
     points_df['Zmax'] = np.max(elevation_data)
@@ -1587,6 +1623,7 @@ def populate_glacier_with_metadata(glacier_name,
 
     # Fill dataframe with elevation and slopes
     points_df['elevation'] = elevation_data
+    points_df['elevation_0_1'] = elevation_0_1
     points_df['slope50'] = slope_50_data
     points_df['slope75'] = slope_75_data
     points_df['slope100'] = slope_100_data
@@ -2235,9 +2272,11 @@ def populate_glacier_with_metadata(glacier_name,
 
     # ---------------------------------------------------------------------------------------------
     """ Add features """
-    points_df['elevation_from_zmin'] = points_df['elevation'] - points_df['Zmin']
+    points_df['elevation_from_Zmin'] = points_df['elevation'] - points_df['Zmin']
     points_df['deltaZ'] = points_df['Zmax'] - points_df['Zmin']
-
+    # new
+    points_df['elevation_from_zmin'] = points_df['elevation'] - points_df['zmin']
+    points_df['deltaz'] = points_df['zmax'] - points_df['zmin']
     # ---------------------------------------------------------------------------------------------
     """ Data imputation """
     t0_imputation = time.time()
@@ -2352,13 +2391,23 @@ def populate_glacier_with_metadata(glacier_name,
 
 if __name__ == "__main__":
 
-    glacier_name =  'RGI60-17.06074'# 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, default="config/config.yaml", help="Path to yaml config file")
+    args = parser.parse_args()
+
+    config = misc.get_config(args.config)  # import from config.yaml
+
+    glacier_name = 'RGI60-11.01450'  # 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
     # ultra weird: RGI60-02.03411 millan has ith but no ice velocity
     # 'RGI60-05.10315' #RGI60-09.00909
 
-    generated_points_dataframe = populate_glacier_with_metadata(
-                                            glacier_name=glacier_name,
-                                            n=30000,
-                                            k=10000,
-                                            seed=42,
-                                            verbose=True)
+    test_glacier_rgi = glacier_name[6:8]
+    rgi_products = get_rgi_products(test_glacier_rgi)
+    coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
+
+    generated_points_dataframe = populate_glacier_with_metadata(glacier_name=glacier_name,
+                                                  config=config,
+                                                  rgi_products=rgi_products,
+                                                  coastlines_dataframe=coastline_dataframe,
+                                                  seed=42,
+                                                  verbose=True)
