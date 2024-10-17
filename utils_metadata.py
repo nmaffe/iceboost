@@ -146,24 +146,27 @@ def calc_volume_glacier(y1=None, y2=None, area=0, h_egm2008=None):
         return volume, err_volume, volume_bsl
 
 
-def get_random_glacier_rgiid(name=None, rgi=11, area=None, seed=None):
+def get_random_glacier_rgiid(name=None, rgi=11, version=None, area=None, seed=None):
     """Provide a rgi number and seed. This method returns a
     random glacier rgiid name.
     If not rgi is passed, any rgi region is good.
     """
-    # setup oggm version
-    utils.get_rgi_dir(version='62')
-    utils.get_rgi_intersects_dir(version='62')
+    if version == '62':
+        name_column_id = 'RGIId'
+        area_column_id = 'Area'
+    elif version == '70G':
+        name_column_id = 'rgi_id'
+        area_column_id = 'area_km2'
 
     if name is not None: return name
     if seed is not None:
         np.random.seed(seed)
     if rgi is not None:
-        oggm_rgi_shp = utils.get_rgi_region_file(f"{rgi:02d}", version='62')
+        oggm_rgi_shp = utils.get_rgi_region_file(f"{rgi:02d}", version=version)
         oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
     if area is not None:
-        oggm_rgi_glaciers = oggm_rgi_glaciers[oggm_rgi_glaciers['Area'] > area]
-    rgi_ids = oggm_rgi_glaciers['RGIId'].dropna().unique().tolist()
+        oggm_rgi_glaciers = oggm_rgi_glaciers[oggm_rgi_glaciers[area_column_id] > area]
+    rgi_ids = oggm_rgi_glaciers[name_column_id].dropna().unique().tolist()
     rgiid = np.random.choice(rgi_ids)
     return rgiid
 
@@ -250,23 +253,28 @@ def create_PIL_image(array, png_resolution=None):
     image_resized = image.resize((png_resolution, png_resolution), Image.Resampling.LANCZOS)
     return image_resized
 
-def get_rgi_products(rgi):
-    utils.get_rgi_dir(version='62')  # setup oggm version
-    utils.get_rgi_intersects_dir(version='62')
+def get_rgi_products(rgi, version):
+
+    if version not in ('62', '70G'):
+        raise ValueError("Accepted RGI versions are 62 or 70G. Exit.")
 
     if not isinstance(rgi, str): rgi = f"{rgi:02d}"
 
     # get rgi region and intersect shp files
-    oggm_rgi_shp = utils.get_rgi_region_file(rgi, version='62')
-    oggm_rgi_intersects_shp = utils.get_rgi_intersects_region_file(rgi, version='62')
+    FILE_RGI_SHP = utils.get_rgi_region_file(rgi, version=version)
+    FILE_RGI_INTERSECTS_SHP = utils.get_rgi_intersects_region_file(rgi, version=version)
 
     # get rgi dataset of glaciers and glaciers intersects
-    oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
-    oggm_rgi_intersects = gpd.read_file(oggm_rgi_intersects_shp, engine='pyogrio')
+    rgi_glaciers = gpd.read_file(FILE_RGI_SHP, engine='pyogrio')
+    rgi_intersects = gpd.read_file(FILE_RGI_INTERSECTS_SHP, engine='pyogrio')
 
     # Create graph of connectivity needed for distance calculations
     rgi_graph = networkx.Graph()
-    edges = oggm_rgi_intersects[['RGIId_1', 'RGIId_2']].values
+    if version == '62':
+        edges = rgi_intersects[['RGIId_1', 'RGIId_2']].values
+    if version == '70G':
+        edges = rgi_intersects[['rgi_g_id_1', 'rgi_g_id_2']].values
+
     rgi_graph.add_edges_from(edges)
 
     # mass balance rgi dataframe
@@ -274,7 +282,7 @@ def get_rgi_products(rgi):
     mbdf = mbdf.loc[mbdf['period'] == '2000-01-01_2020-01-01']
     mbdf_rgi = mbdf.loc[mbdf['reg'] == int(rgi)]
 
-    rgi_products = (oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi)
+    rgi_products = (rgi_glaciers, rgi_intersects, rgi_graph, mbdf_rgi)
 
     return rgi_products
 
@@ -331,3 +339,20 @@ def normalized_elevation(h, Hmin, Hmax):
         return result.tolist()
     else:
         return float(result)
+
+
+def get_version_and_rgi_from_id(id):
+    '''
+    :param id: name of the glacier (string)
+    :return: rgi and version ('62 or '70G')
+    '''
+
+    if id.startswith('RGI60'):
+        version_rgi = '62'
+        rgi = id[6:8]
+
+    elif id.startswith('RGI2000'):
+        version_rgi = '70G'
+        rgi = id[15:17]
+
+    return rgi, version_rgi
