@@ -24,9 +24,11 @@ parser.add_argument('--input_metadata_folder', type=str,
                     default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/",
                     help="Input metadata folder to be gridded")
 parser.add_argument('--input_metadata_file', type=str,
-                    default="metadata37.csv", help="Input metadata file to be gridded")
+                    default="metadata38.csv", help="Input metadata file to be gridded")
+parser.add_argument('--input_icebridge_file', type=str,
+                    default="/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet")
 parser.add_argument('--tmin', type=int, default=20050000, help="Keep only measurements after this year.")
-parser.add_argument('--hmin', type=float, default=0.0, help="Keep only measurements with thickness greater than this.")
+parser.add_argument('--hmin', type=float, default=1.0, help="Keep only measurements with thickness greater than this.")
 parser.add_argument('--method_grid', type=str, default='mean', help="Supported options: mean, median")
 parser.add_argument('--nbins_grid_latlon', type=int, default=100, help="How many bins in the lat/lon directions")
 parser.add_argument('--save', type=int, default=0, help="Save final dataset or not.")
@@ -35,11 +37,23 @@ args = parser.parse_args()
 
 """ Import ungridded dataset """
 glathida = pd.read_csv(f"{args.input_metadata_folder}{args.input_metadata_file}", low_memory=False)
+glathida['THICKNESS'] = glathida['THICKNESS'].astype(float)
+
+# This glacier has a factor 10 too much.
+glathida.loc[glathida['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
+
+unique_rgiid_glathida = glathida['RGIId'].unique()
+
+"""Import IceBridge and calculate the extra glaciers to add"""
+icebridge = pd.read_parquet(f"{args.input_icebridge_file}")
+icebridge_extra = icebridge[~icebridge['RGIId'].isin(unique_rgiid_glathida)]
+
+# Concatenate glathida with icebridge
+glathida = pd.concat([glathida, icebridge_extra], axis=0, ignore_index=True)
 
 """ A. Work on the dataset """
 # A.1 Remove old (-er than 2005) measurements and erroneous data (if DATA_FLAG is not nan)
 cond = ((glathida['SURVEY_DATE'] > args.tmin) & (glathida['DATA_FLAG'].isna()) & (glathida['THICKNESS']>=args.hmin))
-#todo: aggiungere la modifica qua: glathida.loc[glathida['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
 
 glathida = glathida[cond]
 print(f'Original columns: {list(glathida)} \n')
@@ -50,7 +64,7 @@ cols = ['RGI', 'RGIId', 'POINT_LAT', 'POINT_LON', 'THICKNESS', 'Area', 'Area_ice
        'Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'ith_m', 'ith_f',
         'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
         'Form', 'Aspect', 'TermType', 'v50', 'v100', 'v150', 'v300', 'v450', 'vgfa',
-        'curv_50', 'curv_300', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa', 't2m', 'dist_from_ocean',
+        'curv_50', 'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa', 't2m', 'dist_from_ocean',
         'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax', 'Cluster_area', 'Cluster_glaciers',
         'Cluster_geometries', 'elevation_0_1']
 
@@ -81,8 +95,8 @@ gridded_data_list = []  # faster method
 features_to_grid = ['THICKNESS', 'elevation', 'smb', 'dist_from_border_km_geom',
         'ith_m', 'ith_f', 'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
         'v50', 'v100', 'v150', 'v300', 'v450', 'vgfa',
-        'curv_50', 'curv_300', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa', 't2m', 'dist_from_ocean',
-                    'elevation_0_1']
+        'curv_50', 'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa',
+        't2m', 'dist_from_ocean', 'elevation_0_1']
 
 list_num_measurements_before_grid = []
 list_num_measurements_after_grid = []
