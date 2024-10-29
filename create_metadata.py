@@ -25,9 +25,6 @@ from pyproj import Transformer, Geod
 from joblib import Parallel, delayed
 from fetch_glacier_metadata import get_rgi_products
 from create_rgi_mosaic_tanxedem import create_glacier_tile_dem_mosaic
-#from plot_glacier_features import glacier_rgiid
-#from utils_metadata import (from_lat_lon_to_utm_and_epsg, gaussian_filter_with_nans,
-#                            haversine, lmax_imputer, find_cluster_with_graph, lmax_with_covex_hull)
 from utils_metadata import *
 from imputation_policies import smb_elev_functs, smb_elev_functs_hugo
 import misc as misc
@@ -84,7 +81,7 @@ parser.add_argument('--path_ERA5_t2m_folder', type=str,default="/media/maffe/nvm
 parser.add_argument('--GSHHG_folder', type=str,default="/media/maffe/nvme/gshhg/", help="Path to GSHHG folder")
 parser.add_argument('--save', type=int, default=0, help="Save final dataset or not.")
 parser.add_argument('--save_outname', type=str,
-            default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata37",
+            default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata38",
             help="Saved dataframe name.")
 parser.add_argument('--config', type=str, default="config/config.yaml", help="Path to yaml config file")
 
@@ -222,7 +219,10 @@ def add_slopes_elevation(glathida, path_mosaic):
     #glathida['slope_lat_gfa'] = [np.nan] * len(glathida)
     #glathida['slope_lon_gfa'] = [np.nan] * len(glathida)
     glathida['curv_50'] = [np.nan] * len(glathida)
+    glathida['curv_100'] = [np.nan] * len(glathida)
+    glathida['curv_150'] = [np.nan] * len(glathida)
     glathida['curv_300'] = [np.nan] * len(glathida)
+    glathida['curv_450'] = [np.nan] * len(glathida)
     glathida['curv_gfa'] = [np.nan] * len(glathida)
     glathida['aspect_50'] = [np.nan] * len(glathida)
     glathida['aspect_300'] = [np.nan] * len(glathida)
@@ -309,15 +309,23 @@ def add_slopes_elevation(glathida, path_mosaic):
 
                 # Calculate sigma in meters for adaptive gaussian fiter
                 sigma_af_min, sigma_af_max = 100.0, 2000.0
-                try:
+                # OLD
+                #try:
                     # Each id_rgi may come with multiple area values and also nans (probably if all points outside glacier geometries)
-                    area_id = glathida_id_epsg['Area'].min()  # km2
-                    lmax_id = glathida_id_epsg['Lmax'].max()  # m
-                    a = 1e6*area_id/(np.pi*0.5*lmax_id)
-                    sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
+                    #area_id = glathida_id_epsg['Area'].min()  # km2
+                    #lmax_id = glathida_id_epsg['Lmax'].max()  # m
+                    #a = 1e6*area_id/(np.pi*0.5*lmax_id)
+                    #sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
                     #print(area_id, lmax_id, a, value)
-                except Exception as e:
-                    sigma_af = sigma_af_min
+                #except Exception as e:
+                #    sigma_af = sigma_af_min
+
+                # NEW (we use lmax and not Lmax from RGI)
+                area_id = glathida_id_epsg['Area'].min()  # km2
+                lmax_id = glathida_id_epsg['lmax'].max()  # m
+                a = np.where(np.isnan(area_id) or np.isnan(lmax_id), sigma_af_min, 1e6 * area_id / (np.pi * 0.5 * lmax_id))
+                sigma_af = int(np.clip(a, sigma_af_min, sigma_af_max))
+
                 # Ensure that our value correctly in range [50.0, 2000.0]
                 assert sigma_af_min <= sigma_af <= sigma_af_max, f"Value {sigma_af} is not within the range [{sigma_af_min}, {sigma_af_max}]"
                 #print(f"Adaptive gaussian filter with sigma = {value} meters.")
@@ -401,7 +409,10 @@ def add_slopes_elevation(glathida, path_mosaic):
                 # Note that xrspatial using a standard 3x3 grid around pixel to calculate stuff
                 # Note that xrspatial produces nans at boundaries, but that should not be a problem for interpolation.
                 curv_50 = xrspatial.curvature(focus_filter_xarray_50_utm)
+                curv_100 = xrspatial.curvature(focus_filter_xarray_100_utm)
+                curv_150 = xrspatial.curvature(focus_filter_xarray_150_utm)
                 curv_300 = xrspatial.curvature(focus_filter_xarray_300_utm)
+                curv_450 = xrspatial.curvature(focus_filter_xarray_450_utm)
                 curv_af = xrspatial.curvature(focus_filter_xarray_af_utm)
                 aspect_50 = xrspatial.aspect(focus_filter_xarray_50_utm)
                 aspect_300 = xrspatial.aspect(focus_filter_xarray_300_utm)
@@ -438,7 +449,10 @@ def add_slopes_elevation(glathida, path_mosaic):
                 #slope_lat_data_filter_af = dz_dlat_filter_xar_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
                 #slope_lon_data_filter_af = dz_dlon_filter_xar_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
                 curv_data_50 = curv_50.interp(y=northings_xar, x=eastings_xar, method='linear').data
+                curv_data_100 = curv_100.interp(y=northings_xar, x=eastings_xar, method='linear').data
+                curv_data_150 = curv_150.interp(y=northings_xar, x=eastings_xar, method='linear').data
                 curv_data_300 = curv_300.interp(y=northings_xar, x=eastings_xar, method='linear').data
+                curv_data_450 = curv_450.interp(y=northings_xar, x=eastings_xar, method='linear').data
                 curv_data_af = curv_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
                 aspect_data_50 = aspect_50.interp(y=northings_xar, x=eastings_xar, method='linear').data
                 aspect_data_300 = aspect_300.interp(y=northings_xar, x=eastings_xar, method='linear').data
@@ -450,6 +464,7 @@ def add_slopes_elevation(glathida, path_mosaic):
                                                                    slope_125_data, slope_150_data, slope_300_data,
                                                                    slope_450_data, slope_af_data,
                                                                    curv_data_50, curv_data_300, curv_data_af,
+                                                                   curv_data_100, curv_data_150, curv_data_450,
                                                                    aspect_data_50, aspect_data_300, aspect_data_af])
 
                 #contains_nan = any(np.isnan(arr).any() for arr in [slope_lon_data, slope_lat_data,
@@ -473,6 +488,7 @@ def add_slopes_elevation(glathida, path_mosaic):
                 #assert slope_lat_data_filter_150.shape == slope_lon_data_filter_150.shape == elevation_data.shape, "Different shapes, something wrong!"
                 #assert len(slope_lat_data) == len(indexes_all_epsg), "Different shapes, something wrong!"
                 assert curv_data_50.shape == curv_data_300.shape == curv_data_af.shape, "Different shapes, something wrong!"
+                assert curv_data_100.shape == curv_data_150.shape == curv_data_450.shape, "Different shapes, something wrong!"
                 assert aspect_data_50.shape == aspect_data_300.shape == aspect_data_af.shape, "Different shapes, something wrong!"
 
                 # write to dataframe
@@ -504,7 +520,10 @@ def add_slopes_elevation(glathida, path_mosaic):
                 #glathida.loc[indexes_all_epsg, 'slope_lat_gfa'] = slope_lat_data_filter_af
                 #glathida.loc[indexes_all_epsg, 'slope_lon_gfa'] = slope_lon_data_filter_af
                 glathida.loc[indexes_all_epsg, 'curv_50'] = curv_data_50
+                glathida.loc[indexes_all_epsg, 'curv_100'] = curv_data_100
+                glathida.loc[indexes_all_epsg, 'curv_150'] = curv_data_150
                 glathida.loc[indexes_all_epsg, 'curv_300'] = curv_data_300
+                glathida.loc[indexes_all_epsg, 'curv_450'] = curv_data_450
                 glathida.loc[indexes_all_epsg, 'curv_gfa'] = curv_data_af
                 glathida.loc[indexes_all_epsg, 'aspect_50'] = aspect_data_50
                 glathida.loc[indexes_all_epsg, 'aspect_300'] = aspect_data_300
@@ -679,7 +698,7 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
 
     if (any(ele in list(glathida) for ele in ['ith_m', 'v50', 'v100'])):
         print('Variable already in dataframe.')
-        return glathida
+        #return glathida
 
     glathida['ith_m'] = [np.nan] * len(glathida)
     glathida['v50'] = [np.nan] * len(glathida)
@@ -799,19 +818,28 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
 
             # Calculate sigma in meters for adaptive gaussian fiter
             sigma_af_min, sigma_af_max = 100.0, 2000.0
-            try:
-                area_id = glathida_rgi.loc[indexes_id, 'Area'].min()
-                lmax_id = glathida_rgi.loc[indexes_id, 'Lmax'].max()
+            #OLD
+            #try:
+                #area_id = glathida_rgi.loc[indexes_id, 'Area'].min()
+                #lmax_id = glathida_rgi.loc[indexes_id, 'Lmax'].max()
                 # print('area', area_id, 'lmax', lmax_id)
                 # print(lats_rgi_k_id.min(), lats_rgi_k_id.max(), lons_rgi_k_id.min(), lons_rgi_k_id.max(), area_id)
                 # Each id_rgi may come with multiple area values and also nans (probably if all points outside glacier geometries)
                 # area_id = glathida_rgi_tile_id['Area'].min()  # km2
                 # lmax_id = glathida_rgi_tile_id['Lmax'].max()  # m
-                a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
-                sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
+                #a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
+                #sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
                 #print(area_id, lmax_id, a)
-            except Exception as e:
-                sigma_af = sigma_af_min
+            #except Exception as e:
+            #    sigma_af = sigma_af_min
+
+            # NEW (we use lmax and not Lmax from RGI)
+            area_id = glathida_rgi.loc[indexes_id, 'Area'].min()  # km2
+            lmax_id = glathida_rgi.loc[indexes_id, 'lmax'].max()  # m
+            #a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
+            a = np.where(np.isnan(area_id) or np.isnan(lmax_id), sigma_af_min, 1e6 * area_id / (np.pi * 0.5 * lmax_id))
+            sigma_af = int(np.clip(a, sigma_af_min, sigma_af_max))
+
             assert sigma_af_min <= sigma_af <= sigma_af_max, f"Value {sigma_af} is not within the range [{sigma_af_min}, {sigma_af_max}]"
 
             # Calculate how many pixels I need for a resolution of xx
@@ -1188,15 +1216,24 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
                 print(f'no NSIDC velocity data for id {id_rgi}. Go to next id.')
                 continue
 
-            # Calculate sigma in meters for adaptive gaussian fiter
+            # Calculate sigma in meters for adaptive gaussian filter
+            # OLD
             sigma_af_min, sigma_af_max = 100.0, 2000.0
-            try:
-                area_id = glathida_rgi.loc[indexes_id, 'Area'].min()
-                lmax_id = glathida_rgi.loc[indexes_id, 'Lmax'].max()
-                a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
-                sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
-            except Exception as e:
-                sigma_af = sigma_af_min
+            # try:
+                # area_id = glathida_rgi.loc[indexes_id, 'Area'].min()
+                # lmax_id = glathida_rgi.loc[indexes_id, 'Lmax'].max()
+                # a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
+                # sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
+            # except Exception as e:
+            #     sigma_af = sigma_af_min
+
+            # NEW (we use lmax and not Lmax from RGI)
+            area_id = glathida_rgi.loc[indexes_id, 'Area'].min()
+            lmax_id = glathida_rgi.loc[indexes_id, 'lmax'].max()
+            #a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
+            a = np.where(np.isnan(area_id) or np.isnan(lmax_id), sigma_af_min, 1e6 * area_id / (np.pi * 0.5 * lmax_id))
+            sigma_af = int(np.clip(a, sigma_af_min, sigma_af_max))
+
             assert sigma_af_min <= sigma_af <= sigma_af_max, f"Value {sigma_af} is not within the range [{sigma_af_min}, {sigma_af_max}]"
 
             # Calculate how many pixels I need for a resolution of xx
@@ -1687,7 +1724,6 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
 
 
     for rgi in [1,2,3,4,6,7,8,9,10,11,12,13,14,15,16,17,18]:
-    #for rgi in [2,]:
 
         glathida_rgi = glathida.loc[glathida['RGI'] == rgi]
         if len(glathida_rgi) == 0:
@@ -1901,18 +1937,27 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
 
                 # Calculate sigma in meters for adaptive gaussian fiter
                 sigma_af_min, sigma_af_max = 100.0, 2000.0
-                try:
-                    area_id = glathida_rgi.loc[indexes_rgi_k_id, 'Area'].min()
-                    lmax_id = glathida_rgi.loc[indexes_rgi_k_id, 'Lmax'].max()
+                # OLD
+                # try:
+                    #area_id = glathida_rgi.loc[indexes_rgi_k_id, 'Area'].min()
+                    #lmax_id = glathida_rgi.loc[indexes_rgi_k_id, 'Lmax'].max()
                     #print(lats_rgi_k_id.min(), lats_rgi_k_id.max(), lons_rgi_k_id.min(), lons_rgi_k_id.max(), area_id)
                     # Each id_rgi may come with multiple area values and also nans (probably if all points outside glacier geometries)
                     #area_id = glathida_rgi_tile_id['Area'].min()  # km2
                     #lmax_id = glathida_rgi_tile_id['Lmax'].max()  # m
-                    a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
-                    sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
+                    #a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
+                    #sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
                     # print(area_id, lmax_id, a, value)
-                except Exception as e:
-                    sigma_af = sigma_af_min
+                #except Exception as e:
+                    #sigma_af = sigma_af_min
+
+                area_id = glathida_rgi.loc[indexes_rgi_k_id, 'Area'].min()
+                lmax_id = glathida_rgi.loc[indexes_rgi_k_id, 'lmax'].max()
+                #a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
+                a = np.where(np.isnan(area_id) or np.isnan(lmax_id), sigma_af_min,
+                             1e6 * area_id / (np.pi * 0.5 * lmax_id))
+                sigma_af = int(np.clip(a, sigma_af_min, sigma_af_max))
+
                 # Ensure that our value correctly in range [50.0, 2000.0]
                 assert sigma_af_min <= sigma_af <= sigma_af_max, f"Value {sigma_af} is not within the range [{sigma_af_min}, {sigma_af_max}]"
                 # print(f"Adaptive gaussian filter with sigma = {value} meters.")
@@ -2980,7 +3025,7 @@ if __name__ == '__main__':
     t0 = time.time()
 
     # Create icebridge training data
-    prepare_icebridge = True
+    prepare_icebridge = False
     if prepare_icebridge:
         #icebridge = pd.read_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_for_iceboost.parquet')
         #icebridge = add_rgi(icebridge, args.path_O1Regions_shp)
@@ -2989,12 +3034,12 @@ if __name__ == '__main__':
         #                     index=False)
         icebridge = pd.read_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet')
         icebridge = add_slopes_elevation(icebridge, args.mosaic)
-        icebridge = add_smb(icebridge, args.RACMO_folder)
+        #icebridge = add_smb(icebridge, args.RACMO_folder)
         icebridge = add_millan_vx_vy_ith(icebridge, args.millan_velocity_folder, args.millan_icethickness_folder)
-        icebridge = add_dist_from_boder_using_geometries(icebridge)
-        icebridge = add_dist_from_water(icebridge, args.GSHHG_folder)
-        icebridge = add_farinotti_ith(icebridge, args.farinotti_icethickness_folder)
-        icebridge = add_t2m(icebridge, args.path_ERA5_t2m_folder)
+        #icebridge = add_dist_from_boder_using_geometries(icebridge)
+        #icebridge = add_dist_from_water(icebridge, args.GSHHG_folder)
+        #icebridge = add_farinotti_ith(icebridge, args.farinotti_icethickness_folder)
+        #icebridge = add_t2m(icebridge, args.path_ERA5_t2m_folder)
         icebridge.to_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet', index=False)
         exit('ADDIO')
 
@@ -3015,10 +3060,10 @@ if __name__ == '__main__':
     #glathida = add_dist_from_water(glathida, args.GSHHG_folder)
     #glathida = add_smb(glathida, args.RACMO_folder)
     #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
-    glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
+    #glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
     #glathida = add_dist_from_boder_using_geometries(glathida)
-    #glathida = add_slopes_elevation(glathida, args.mosaic)
-    #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
+    glathida = add_slopes_elevation(glathida, args.mosaic)
+    glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
     #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
 
     if args.save:
