@@ -40,7 +40,6 @@ file_deploy = pd.read_csv(f'{config.model_input_dir}{config.filename_csv_deploy}
 all_glacier_ids = file_deploy.values.flatten().tolist()
 
 glathida_rgis = pd.read_csv(config.metadata_csv_file, low_memory=False)
-glathida_rgis.loc[glathida_rgis['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
 
 # Load the model(s)
 model_xgb_filename = config.model_input_dir + config.model_filename_xgb
@@ -54,27 +53,32 @@ iceboost_cat.load_model(model_cat_filename, format='cbm')
 # *********************************************
 # Model deploy
 # *********************************************
-
-#glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-11.01450', rgi=5, area=100, seed=None)
 run_deploy_from_csv_list = True
 if run_deploy_from_csv_list:
     for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
-        glacier_name_for_generation = 'RGI60-19.01410' #'RGI60-01.13696'# 'RGI60-11.01450' #'RGI60-13.33257'
-        # RGI60-07.00832
+        #glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-01.13696',
+        #                                                       rgi=3, version='70G', area=10, seed=None)
+        glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-19.01892', rgi=4, version='70G', area=100, seed=None)
+        #glacier_name_for_generation = 'RGI2000-v7.0-G-11-02596'# , #'RGI2000-v7.0-G-11-02596'
         print(n, glacier_name_for_generation)
+        # RGI60-01.13696 RGI60-03.01517 RGI60-05.13501 RGI60-11.01450 RGI2000-v7.0-G-11-02596 RGI60-05.13501
         #if f"{glacier_name_for_generation}.png" in os.listdir(f"{config.model_output_results_dir}"):
         #    print(f"{glacier_name_for_generation} already in there.")
         #    continue
 
-        test_glacier_rgi = glacier_name_for_generation[6:8]
-        rgi_products = get_rgi_products(test_glacier_rgi)
+        test_glacier_rgi, version = get_version_and_rgi_from_id(glacier_name_for_generation)
+        rgi_products = get_rgi_products(test_glacier_rgi, version=version)
         coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
+        link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
 
         test_glacier = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation,
                                                       config=config,
                                                       rgi_products=rgi_products,
+                                                      rgi=test_glacier_rgi,
+                                                      version=version,
                                                       coastlines_dataframe=coastline_dataframe,
+                                                      link_rgi6_rg7_dataframe=link_ids_rgi6_rgi7,
                                                       seed=42,
                                                       verbose=True)
 
@@ -84,10 +88,12 @@ if run_deploy_from_csv_list:
         h_egm2008 = calc_geoid_heights(lons=lons, lats=lats, h_wgs84=h_wgs84)
 
         # Begin to extract all necessary things to plot the result
-        oggm_rgi_shp = glob(f"{config.oggm_dir}rgi/RGIV62/{test_glacier_rgi}*/{test_glacier_rgi}*.shp")[0]
-        oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
-        glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name_for_generation]['geometry'].item()
-        glacier_area = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name_for_generation]['Area'].item()
+        oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
+        if version == '62': name_column_id = 'RGIId'
+        elif version == '70G': name_column_id = 'rgi_id'
+        glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == glacier_name_for_generation]['geometry'].item()
+        glacier_area = test_glacier.iloc[0]['Area']
+
         exterior_ring = glacier_geometry.exterior  # shapely.geometry.polygon.LinearRing
         x0, y0, x1, y1 = exterior_ring.bounds
         dx, dy = x1 - x0, y1 - y0
@@ -350,34 +356,45 @@ if run_deploy_from_csv_list:
 
 ####################################
 # Regional simulation
-def run_rgi_simulation(rgi=None):
+def run_rgi_simulation(rgi=None, version=None):
 
-    print(f"Begin regional simulation for region {rgi}")
+    print(f"Begin regional simulation for region {rgi} version {version}")
 
-    # Get rgi products
-    rgi_products = get_rgi_products(rgi)
-    oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
-    # Get coastlines
+    rgi_products = get_rgi_products(rgi, version=version)
     coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
+    link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
+
+    oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
+    if version == '62':
+        name_column_id = 'RGIId'
+        name_column_area = 'Area'
+        name_column_name = 'Name'
+    elif version == '70G':
+        name_column_id = 'rgi_id'
+        name_column_area = 'area_km2'
+        name_column_name = 'glac_name'
 
     # load xgb, cat models (by default they run on cpu)
     iceboost_xgb, iceboost_cat = load_models(config)
 
     # Get glaciers and order them in decreasing order by Area. First glaciers will be bigger and slower to process.
-    oggm_rgi_glaciers = oggm_rgi_glaciers.sort_values(by='Area', ascending=False)
+    oggm_rgi_glaciers = oggm_rgi_glaciers.sort_values(by=name_column_area, ascending=False)
 
     def process_glacier(gl_id):
 
         # 0. get some useful ingredients
-        glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'] == gl_id]['geometry'].item()
-        glacier_area = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'] == gl_id]['Area'].item()
-        glacier_name = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'] == gl_id]['Name'].item()
+        glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == gl_id]['geometry'].item()
+        glacier_area = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == gl_id][name_column_area].item()
+        glacier_name = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == gl_id][name_column_name].item()
 
         # 1. generate features
         glacier_data = populate_glacier_with_metadata(glacier_name=gl_id,
                                                       config=config,
                                                       rgi_products=rgi_products,
+                                                      rgi=rgi,
+                                                      version=version,
                                                       coastlines_dataframe=coastline_dataframe,
+                                                      link_rgi6_rg7_dataframe=link_ids_rgi6_rgi7,
                                                       seed=42,
                                                       verbose=False)
 
@@ -460,21 +477,23 @@ def run_rgi_simulation(rgi=None):
 
         # 5. save .tif
         PATH_OUT = config.model_output_global_deploy_dir
-        file_out_tif = f'{PATH_OUT}rgi{rgi}/{gl_id}.tif'
-        data_array.rio.to_raster(file_out_tif, compress="deflate")
+
+        if config.deploy_global_save_figs:
+            file_out_tif = f'{PATH_OUT}rgi{rgi}/{gl_id}.tif'
+            data_array.rio.to_raster(file_out_tif, compress="deflate")
 
 
     multicpu = True
     if multicpu:
-        Parallel(n_jobs=8, timeout=300)(delayed(process_glacier)(gl_id) for gl_id in tqdm(oggm_rgi_glaciers['RGIId'],
+        Parallel(n_jobs=8, timeout=300)(delayed(process_glacier)(gl_id) for gl_id in tqdm(oggm_rgi_glaciers[name_column_id],
                                                                                     desc=f"rgi {rgi} glaciers",
                                                                                     leave=True))
     else:
-        for i, gl_id in tqdm(enumerate(oggm_rgi_glaciers['RGIId']), total=len(oggm_rgi_glaciers),
+        for i, gl_id in tqdm(enumerate(oggm_rgi_glaciers[name_column_id]), total=len(oggm_rgi_glaciers),
                              desc=f"rgi {rgi} glaciers", leave=True):
             process_glacier(gl_id)
     print(f"Finished regional simulation for rgi {rgi}.")
 
 run_rgi_simulation_YN = False
 if run_rgi_simulation_YN:
-    run_rgi_simulation(rgi=5)
+    run_rgi_simulation(rgi=11, version='70G')
