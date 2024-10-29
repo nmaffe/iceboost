@@ -32,6 +32,7 @@ import misc as misc
 from joblib import Parallel, delayed
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--save_model', type=int, default=0, help="Save trained model or not.")
 parser.add_argument('--config', type=str, default="config/config.yaml", help="Path to yaml config file")
 args = parser.parse_args()
 
@@ -58,12 +59,13 @@ def xgb_custom_obj(elevation):
 class CFG:
     features_not_used = ['Form', 'sia', 'RGI', 'lats', 'Area_icefree', 'aspect_50', 'aspect_300', 'aspect_gfa', 'Form'
                          'Slope', 'Lmax', 'Aspect', 'Cluster_glaciers', 'Cluster_geometries',
-                         'Zmin', 'Zmax', 'Zmed', 'elevation_from_Zmin', 'deltaZ']
+                         'Zmin', 'Zmax', 'Zmed', 'elevation_from_Zmin', 'deltaZ', 'TermType',
+                           ]
 
-    featuresSmall = ['Area',  'Perimeter', 'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax', 'TermType',
+    featuresSmall = ['Area',  'Perimeter', 'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax',
                 'elevation', 'elevation_from_zmin', 'dist_from_border_km_geom',
                    'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
-                 'curv_50', 'curv_300', 'curv_gfa', 'dmdtda_hugo',  'deltaz',
+                 'curv_50',  'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa', 'dmdtda_hugo',  'deltaz',
                      'smb', 't2m', 'dist_from_ocean', 'Cluster_area', 'elevation_0_1']
     featuresBig = featuresSmall + ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa', ]
 
@@ -72,8 +74,8 @@ class CFG:
         'Form': 'Form', 'TermType': 'TermType', 'Aspect': 'Aspect', 'elevation': 'h', 'elevation_from_Zmin': r'h-H$_{min}$',
         'dist_from_border_km_geom': r'd$_{noice}$', 'slope50': r's$_{50}$', 'slope75': r's$_{75}$', 'slope100': r's$_{100}$',
         'slope125': r's$_{125}$', 'slope150': r's$_{150}$', 'slope300': r's$_{300}$', 'slope450': r's$_{450}$',
-        'slopegfa': r's$_{gfa}$', 'curv_50': r'c$_{50}$',
-        'curv_300': r'c$_{300}$', 'curv_gfa': r'c$_{gfa}$', 'aspect_50': r'a$_{50}$', 'aspect_300': r'a$_{300}$', 'aspect_gfa': r'a$_{gfa}$',
+        'slopegfa': r's$_{gfa}$', 'curv_50': r'c$_{50}$', 'curv_100': r'c$_{100}$', 'curv_150': r'c$_{150}$',
+        'curv_300': r'c$_{300}$', 'curv_450': r'c$_{450}$', 'curv_gfa': r'c$_{gfa}$', 'aspect_50': r'a$_{50}$', 'aspect_300': r'a$_{300}$', 'aspect_gfa': r'a$_{gfa}$',
         'dmdtda_hugo': 'MB', 'smb': 'mb', 't2m': 't2m', 'v50': r'v$_{50}$', 'v100': r'v$_{100}$', 'v150': r'v$_{150}$',
         'v300': r'v$_{300}$', 'v450': r'v$_{450}$', 'vgfa': r'v$_{gfa}$', 'Area_icefree': 'Area icefree', 'Perimeter': 'Perimeter',
         'deltaZ': r'$\Delta$H', 'RGI': 'RGI', 'dist_from_ocean': r'd$_{ocean}$', 'zmin': r'h$_{min}$', 'zmax': r'h$_{max}$', 'zmed': r'h$_{med}$',
@@ -114,7 +116,6 @@ class CFG:
 
 # Import the training dataset
 glathida_rgis = pd.read_csv(config.metadata_csv_file, low_memory=False)
-glathida_rgis.loc[glathida_rgis['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-03.01517'])]
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-01.13696'])] # Malaspina
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-05.10315'])] # Flade Isblink ice cap
@@ -457,14 +458,13 @@ print(f"Rmse {100*(np.nanmean(rmses_Far)-np.nanmean(rmses_ML))/np.nanmean(rmses_
 
 print(f"At the end of cv the best rmse is {best_rmse}")
 
-if config.save_model:
+if args.save_model:
     date_n_time = time.strftime("%Y%m%d", time.localtime())
     fileout_xgb = f"{config.model_input_dir}iceboost_xgb_{date_n_time}.json"
     fileout_cat = f"{config.model_input_dir}iceboost_cat_{date_n_time}.cbm"
     best_model_xgb.save_model(fileout_xgb)
     best_model_cat.save_model(fileout_cat, format="cbm")
     print(f'saved models {fileout_xgb} and {fileout_cat}')
-
 
 # ************************************
 # plot
@@ -565,7 +565,8 @@ if plot_spatial_test_predictions:
 # *********************************************
 # Model deploy
 # *********************************************
-glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-04.04988', rgi=5, area=100, seed=None)
+glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-11.01450', rgi=11, version='70G', area=10, seed=None)
+#glacier_name_for_generation = 'RGI2000-v7.0-G-11-02596'
 # RGI60-01.13696
 # RGI60-19.00748 molto bello
 # 'RGI60-13.37753', RGI60-13.43528 RGI60-13.54431
@@ -606,15 +607,20 @@ glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-04.04988', rg
 
 
 # Generate points for one glacier
-test_glacier_rgi = glacier_name_for_generation[6:8]
-rgi_products = get_rgi_products(test_glacier_rgi)
+test_glacier_rgi, version = get_version_and_rgi_from_id(glacier_name_for_generation)
+#test_glacier_rgi = glacier_name_for_generation[6:8] # old
+rgi_products = get_rgi_products(test_glacier_rgi, version=version)
 coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
+link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
 
 
 test_glacier = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation,
                                                       config=config,
                                                       rgi_products=rgi_products,
+                                                      rgi=test_glacier_rgi,
+                                                      version=version,
                                                       coastlines_dataframe=coastline_dataframe,
+                                                      link_rgi6_rg7_dataframe=link_ids_rgi6_rgi7,
                                                       seed=42,
                                                       verbose=True)
 
@@ -634,6 +640,12 @@ h_egm2008 = calc_geoid_heights(lons=lons, lats=lats, h_wgs84=h_wgs84)
 #plt.show()
 
 X_test_glacier = test_glacier[CFG.features]
+perturbate_features = False
+if perturbate_features:
+    X_test_glacier = X_test_glacier + np.random.normal(
+        loc=0, scale=0.2 * np.abs(X_test_glacier),  # 10% of each feature's value
+    )
+
 y_test_glacier_m = test_glacier[CFG.millan]
 y_test_glacier_f = test_glacier[CFG.farinotti]
 dtest = xgb.DMatrix(data=X_test_glacier)
@@ -655,10 +667,18 @@ bedrock_elevations_Millan = test_glacier['elevation'] - y_test_glacier_m
 bedrock_elevations_Far = test_glacier['elevation'] - y_test_glacier_f
 
 # Begin to extract all necessary things to plot the result
-oggm_rgi_shp = glob(f"{config.oggm_dir}rgi/RGIV62/{test_glacier_rgi}*/{test_glacier_rgi}*.shp")[0]
-oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
-glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name_for_generation]['geometry'].item()
-glacier_area = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name_for_generation]['Area'].item()
+#oggm_rgi_shp = glob(f"{config.oggm_dir}rgi/RGIV62/{test_glacier_rgi}*/{test_glacier_rgi}*.shp")[0]
+#oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
+oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
+if version == '62':
+    name_column_id = 'RGIId'
+elif version == '70G':
+    name_column_id = 'rgi_id'
+#glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name_for_generation]['geometry'].item()
+glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == glacier_name_for_generation]['geometry'].item()
+#glacier_area = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name_for_generation]['Area'].item()
+glacier_area = test_glacier.iloc[0]['Area']
+
 exterior_ring = glacier_geometry.exterior  # shapely.geometry.polygon.LinearRing
 x0, y0, x1, y1 = exterior_ring.bounds
 dx, dy = x1 - x0, y1 - y0
@@ -680,6 +700,7 @@ focus = focus_mosaic_tiles.squeeze()
 
 
 # Get Farinotti file and calculate the volume
+#todo: currently import farinotti only if i'm running rgi62. Therefore this does not work for rgi7
 if not no_farinotti_data:
     test_glacier_folder_farinotti = glob(f"{config.farinotti_icethickness_dir}/*{test_glacier_rgi}/")[0]
     ice_farinotti = rioxarray.open_rasterio(test_glacier_folder_farinotti+glacier_name_for_generation+'_thickness.tif')
