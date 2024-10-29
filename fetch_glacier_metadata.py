@@ -51,7 +51,10 @@ interpolation and therefore is preferred.
 def populate_glacier_with_metadata(glacier_name,
                                    config = None,
                                    rgi_products=None,
+                                   rgi=None,
+                                   version=None,
                                    coastlines_dataframe = None,
+                                   link_rgi6_rg7_dataframe = None,
                                    seed=None,
                                    verbose=True):
 
@@ -64,14 +67,18 @@ def populate_glacier_with_metadata(glacier_name,
     k_max_geoms = config.kdtree_dist_max_k_geometries
     graph_max_layer_depth = config.graph_max_layer_depth
 
-    rgi = int(glacier_name[6:8]) # get rgi from the glacier code
+    #rgi = int(glacier_name[6:8]) # get rgi from the glacier code
+    rgi = int(rgi)
 
     # Get rgi products
     oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
 
+    if version == '62': name_column_id = 'RGIId'
+    elif version == '70G': name_column_id = 'rgi_id'
+
     try:
         # Get glacier dataset
-        gl_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name]
+        gl_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id]==glacier_name]
         gl_geom = gl_df['geometry'].item()  # glacier geometry Polygon
         gl_geom_ext = Polygon(gl_geom.exterior)  # glacier geometry Polygon
         gl_geom_nunataks_list = [Polygon(nunatak) for nunatak in gl_geom.interiors]  # list of nunataks Polygons
@@ -161,11 +168,11 @@ def populate_glacier_with_metadata(glacier_name,
     #points_df['Zmin'] = gl_df['Zmin'].item() # we use tandemx for this
     #points_df['Zmax'] = gl_df['Zmax'].item() # we use tandemx for this
     #points_df['Zmed'] = gl_df['Zmed'].item() # we use tandemx for this
-    points_df['Slope'] = gl_df['Slope'].item()
-    points_df['Lmax'] = gl_df['Lmax'].item()
+    #points_df['Slope'] = gl_df['Slope'].item()
+    #points_df['Lmax'] = gl_df['Lmax'].item()
     #points_df['Form'] = gl_df['Form'].item() # not used anymore
-    points_df['TermType'] = gl_df['TermType'].item()
-    points_df['Aspect'] = gl_df['Aspect'].item()
+    #points_df['TermType'] = gl_df['TermType'].item()
+    #points_df['Aspect'] = gl_df['Aspect'].item()
 
     # Area in km2, perimeter in m
     # Note that the area in OGGM equals to area_ice.
@@ -185,23 +192,31 @@ def populate_glacier_with_metadata(glacier_name,
     points_df['lmax'] = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg)
 
     # Data imputation for lmax (needed for sure for rgi 1 mostly)
-    if gl_df['Lmax'].item() == -9:
-        #lmax = lmax_imputer(gl_geom_ext_gdf, glacier_epsg) # slower
-        lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg) # faster
-        points_df['Lmax'] = lmax
+    #if gl_df['Lmax'].item() == -9:
+        ##lmax = lmax_imputer(gl_geom_ext_gdf, glacier_epsg) # slower
+        #lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg) # faster
+        #points_df['Lmax'] = lmax
 
     # Data imputation for the aspect (found needed for Greenland)
-    if gl_df['Aspect'].item() == -9: points_df['Aspect'] = 0
+    #if gl_df['Aspect'].item() == -9: points_df['Aspect'] = 0
 
     # Calculate the adaptive filter size based on the Area value
     sigma_af_min, sigma_af_max = 100.0, 2000.0
-    try:
-        area_gl = points_df['Area'][0]
-        lmax_gl = points_df['Lmax'][0]
-        a = 1e6 * area_gl / (np.pi * 0.5 * lmax_gl)
-        sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
-    except Exception as e:
-        sigma_af = sigma_af_min
+    # OLD
+    #try:
+    #    area_gl = points_df['Area'][0]
+    #    lmax_gl = points_df['Lmax'][0]
+    #    a = 1e6 * area_gl / (np.pi * 0.5 * lmax_gl)
+    #    sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
+    #except Exception as e:
+    #    sigma_af = sigma_af_min
+
+    # NEW (we use lmax and not Lmax from RGI)
+    area_gl = points_df['Area'][0]
+    lmax_gl = points_df['lmax'][0]
+    a = 1e6 * area_gl / (np.pi * 0.5 * lmax_gl)
+    sigma_af = int(np.clip(a, sigma_af_min, sigma_af_max))
+
     # Ensure that our value correctly in range
     assert sigma_af_min <= sigma_af <= sigma_af_max, f"Value {sigma_af} is not within the range [{sigma_af_min}, {sigma_af_max}]"
 
@@ -1359,6 +1374,16 @@ def populate_glacier_with_metadata(glacier_name,
     num_px_sigma_450 = max(1, round(450 / res_utm_metres))
     num_px_sigma_af = max(1, round(sigma_af / res_utm_metres))
 
+    #print(num_px_sigma_50)
+    #print(num_px_sigma_75)
+    #print(num_px_sigma_100)
+    #print(num_px_sigma_125)
+    #print(num_px_sigma_150)
+    #print(num_px_sigma_300)
+    #print(num_px_sigma_450)
+    #print(num_px_sigma_af)
+    #input('wait')
+
     kernel50 = Gaussian2DKernel(num_px_sigma_50, x_size=4 * num_px_sigma_50 + 1, y_size=4 * num_px_sigma_50 + 1)
     kernel75 = Gaussian2DKernel(num_px_sigma_75, x_size=4 * num_px_sigma_75 + 1, y_size=4 * num_px_sigma_75 + 1)
     kernel100 = Gaussian2DKernel(num_px_sigma_100, x_size=4 * num_px_sigma_100 + 1, y_size=4 * num_px_sigma_100 + 1)
@@ -1485,6 +1510,10 @@ def populate_glacier_with_metadata(glacier_name,
         focus_filter_xarray_450_utm = focus_utm.copy(data=focus_filter_450_utm)
         focus_filter_xarray_af_utm = focus_utm.copy(data=focus_filter_af_utm)
 
+        #fig, ax = plt.subplots()
+        #focus_utm.plot(cmap='terrain')
+        #plt.show()
+
         # create xarray slopes (differentiating an xarray is much slower than using numpy)
         #dz_dlat_xar, dz_dlon_xar = focus_utm.differentiate(coord='y'), focus_utm.differentiate(coord='x')
         #dz_dlat_filter_xar_50, dz_dlon_filter_xar_50 = focus_filter_xarray_50_utm.differentiate(coord='y'), focus_filter_xarray_50_utm.differentiate(coord='x')
@@ -1536,8 +1565,15 @@ def populate_glacier_with_metadata(glacier_name,
 
     # Calculate curvature and aspect using xrspatial
     curv_50 = xrspatial.curvature(focus_filter_xarray_50_utm)
+    curv_100 = xrspatial.curvature(focus_filter_xarray_100_utm)
+    curv_150 = xrspatial.curvature(focus_filter_xarray_150_utm)
     curv_300 = xrspatial.curvature(focus_filter_xarray_300_utm)
+    curv_450 = xrspatial.curvature(focus_filter_xarray_450_utm)
     curv_af = xrspatial.curvature(focus_filter_xarray_af_utm)
+
+    #fig, ax = plt.subplots()
+    #curv_af.plot()
+    #plt.show()
 
     #ttest0 = time.time()
     #aspect_rad = np.arctan2(dz_dlat_np_50, dz_dlon_np_50)
@@ -1554,7 +1590,7 @@ def populate_glacier_with_metadata(glacier_name,
     #aspect_300 = xrspatial.aspect(focus_filter_xarray_300_utm)
     #aspect_af = xrspatial.aspect(focus_filter_xarray_af_utm)
 
-    #slope_450_xar.plot()
+    #slope_50_xar.plot()
     #plt.show()
 
     # interpolate slope and dem (this has to be done on cpu as xarray-cupy does not support interpolation yet)
@@ -1589,7 +1625,10 @@ def populate_glacier_with_metadata(glacier_name,
     #slope_lat_data_filter_af = dz_dlat_filter_xar_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
     #slope_lon_data_filter_af = dz_dlon_filter_xar_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
     curv_data_50 = curv_50.interp(y=northings_xar, x=eastings_xar, method='linear').data
+    curv_data_100 = curv_100.interp(y=northings_xar, x=eastings_xar, method='linear').data
+    curv_data_150 = curv_150.interp(y=northings_xar, x=eastings_xar, method='linear').data
     curv_data_300 = curv_300.interp(y=northings_xar, x=eastings_xar, method='linear').data
+    curv_data_450 = curv_450.interp(y=northings_xar, x=eastings_xar, method='linear').data
     curv_data_af = curv_af.interp(y=northings_xar, x=eastings_xar, method='linear').data
     #aspect_data_50 = aspect_50.interp(y=northings_xar, x=eastings_xar, method='linear').data
     #aspect_data_300 = aspect_300.interp(y=northings_xar, x=eastings_xar, method='linear').data
@@ -1597,7 +1636,11 @@ def populate_glacier_with_metadata(glacier_name,
 
     # Hugonnet mass balance
     try:
-        glacier_dmdtda = mbdf_rgi.at[glacier_name, 'dmdtda']
+        if version == '62':
+            glacier_dmdtda = mbdf_rgi.at[glacier_name, 'dmdtda']
+        elif version == '70G':
+            rgi_id_6 = link_rgi6_rg7_dataframe.at[glacier_name, 'rgi_id_62']
+            glacier_dmdtda = mbdf_rgi.at[rgi_id_6, 'dmdtda']
     except: # impute the mean
         glacier_dmdtda = mbdf_rgi['dmdtda'].median()
     print(f'Hugonnet mb: {glacier_dmdtda} m w.e/yr') if verbose else None
@@ -1607,7 +1650,8 @@ def populate_glacier_with_metadata(glacier_name,
     contains_nan = any(np.isnan(arr).any() for arr in [elevation_data, slope_50_data, slope_75_data, slope_100_data,
                                                        slope_125_data, slope_150_data, slope_300_data,
                                                        slope_450_data, slope_af_data,
-                                                       curv_data_50, curv_data_300, curv_data_af,])
+                                                       curv_data_50, curv_data_100, curv_data_150, curv_data_300,
+                                                       curv_data_450, curv_data_af,])
                                                        #aspect_data_50, aspect_data_300, aspect_data_af])
 
     if contains_nan:
@@ -1651,7 +1695,10 @@ def populate_glacier_with_metadata(glacier_name,
     #points_df['slope_lat_gfa'] = slope_lat_data_filter_af
     #points_df['slope_lon_gfa'] = slope_lon_data_filter_af
     points_df['curv_50'] = curv_data_50
+    points_df['curv_100'] = curv_data_100
+    points_df['curv_150'] = curv_data_150
     points_df['curv_300'] = curv_data_300
+    points_df['curv_450'] = curv_data_450
     points_df['curv_gfa'] = curv_data_af
     #points_df['aspect_50'] = aspect_data_50
     #points_df['aspect_300'] = aspect_data_300
@@ -1858,7 +1905,14 @@ def populate_glacier_with_metadata(glacier_name,
 
     folder_rgi_farinotti = f"{config.farinotti_icethickness_dir}RGI60-{rgi:02d}/"
     try: # Import farinotti ice thickness file. Note that it contains zero where ice not present.
-        file_glacier_farinotti =rioxarray.open_rasterio(f'{folder_rgi_farinotti}{glacier_name}_thickness.tif', masked=False)
+        if version == '62':
+            file_glacier_farinotti = rioxarray.open_rasterio(f'{folder_rgi_farinotti}{glacier_name}_thickness.tif',
+                                                             masked=False)
+        elif version == '70G':
+                rgi_id_6 = link_rgi6_rg7_dataframe.at[glacier_name, 'rgi_id_62']
+                file_glacier_farinotti = rioxarray.open_rasterio(f'{folder_rgi_farinotti}{rgi_id_6}_thickness.tif',
+                                                         masked=False)
+
         file_glacier_farinotti = file_glacier_farinotti.where(file_glacier_farinotti != 0.0) # replace zeros with nans.
         file_glacier_farinotti.rio.write_nodata(np.nan, inplace=True)
 
@@ -1925,7 +1979,7 @@ def populate_glacier_with_metadata(glacier_name,
 
     # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks) and convert to UTM
     tgeoms0 = time.time()
-    cluster_geometry_list = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'].isin(list_cluster_RGIIds), 'geometry'].tolist()
+    cluster_geometry_list = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id].isin(list_cluster_RGIIds), 'geometry'].tolist()
 
     # Combine into a series of all glaciers in the cluster
     cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
@@ -1962,7 +2016,13 @@ def populate_glacier_with_metadata(glacier_name,
     cluster_exterior_ring_gpd = gpd.GeoSeries([cluster_exterior_ring[0]], crs=glacier_epsg).to_crs("EPSG:4326")
     area_cluster, perimeter_cluster = Geod(ellps="WGS84").geometry_area_perimeter(cluster_exterior_ring_gpd.iloc[0])
     area_cluster = abs(area_cluster) * 1e-6 # km^2
-    #print(glacier_area, area_cluster)
+    #print(glacier_area, area_cluster, no_geometries_in_cluster)
+
+    #fig, ax = plt.subplots(figsize=(8, 7))
+    #ax.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='r')  # first entry is outside border
+    #for geom in geoseries_geometries_epsg.loc[1:]:
+    #    ax.plot(*geom.xy, lw=1, c='grey')
+    #plt.show()
 
     # Method that uses KDTree index (best method: found to be same as exact method and ultra fast)
     run_method_KDTree_index = True
@@ -1974,7 +2034,13 @@ def populate_glacier_with_metadata(glacier_name,
         points_coords_array = np.column_stack((eastings, northings)) #(10000,2)
 
         # Extract all coordinates from the GeoSeries geometries
-        geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
+        # For some reason for version 70G there is an extra dimension.
+        # In fact I find that cluster_geometry_no_divides_epsg.item().has_z >> True
+        if version == '62':
+            geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
+        elif version == '70G':
+            # Remove the third dimension by stripping out the z-values.
+            geoms_coords_array = np.concatenate([np.array(geom.xy).T for geom in geoseries_geometries_epsg.geometry])
 
         # it appears that when no. geometries is low pykdtree_kdtree is faster, else sklearn KDTree is faster.
         if no_geometries_in_cluster > 2000:
@@ -1983,6 +2049,8 @@ def populate_glacier_with_metadata(glacier_name,
         else:
             kdtree = pykdtree.kdtree.KDTree(geoms_coords_array)
             print('using pykdtree.kdtree.KDTree') if verbose else None
+
+        #print(geoms_coords_array.shape, points_coords_array.shape)
 
         # Perform nearest neighbor search for each point and calculate minimum distances
         # k can be decreased for speedup to, e.g. k=200. I suspect that k can be somehow as low as 200, and in such
@@ -2086,7 +2154,7 @@ def populate_glacier_with_metadata(glacier_name,
                 # Plot boundaries (only external periphery) of all glaciers in the cluster
                 if list_cluster_RGIIds is not None:
                     for gl_neighbor_id in list_cluster_RGIIds:
-                        gl_neighbor_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'] == gl_neighbor_id]
+                        gl_neighbor_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == gl_neighbor_id]
                         gl_neighbor_geom = gl_neighbor_df['geometry'].item()  # glacier geometry Polygon
                         ax1.plot(*gl_neighbor_geom.exterior.xy, lw=1, c='orange', zorder=0)
 
@@ -2399,15 +2467,20 @@ if __name__ == "__main__":
 
     glacier_name = 'RGI60-11.01450'  # 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
     # ultra weird: RGI60-02.03411 millan has ith but no ice velocity
-    # 'RGI60-05.10315' #RGI60-09.00909
+    # 'RGI60-05.10315' #RGI60-09.00909 RGI60-05.10315 RGI60-05.10315
 
-    test_glacier_rgi = glacier_name[6:8]
-    rgi_products = get_rgi_products(test_glacier_rgi)
+    test_glacier_rgi, version = get_version_and_rgi_from_id(glacier_name)
+    rgi_products = get_rgi_products(test_glacier_rgi, version=version)
     coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
+    link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
 
     generated_points_dataframe = populate_glacier_with_metadata(glacier_name=glacier_name,
                                                   config=config,
                                                   rgi_products=rgi_products,
+                                                  rgi=test_glacier_rgi,
+                                                  version=version,
                                                   coastlines_dataframe=coastline_dataframe,
+                                                  link_rgi6_rg7_dataframe=link_ids_rgi6_rgi7,
                                                   seed=42,
                                                   verbose=True)
+
