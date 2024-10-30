@@ -356,3 +356,36 @@ def get_version_and_rgi_from_id(id):
         rgi = id[15:17]
 
     return rgi, version_rgi
+
+
+def plot_feature_scatter(config, test_glacier):
+    """
+    Plot scatter plots for features in the given configuration against the glacier data.
+
+    Parameters:
+    - config: An object that contains the 'features' attribute.
+    - test_glacier: A DataFrame containing 'lons', 'lats', and feature data.
+
+    """
+    feats = config.features
+    num_feats = len(feats)  # Number of features
+    cols = 6
+    rows = (num_feats // cols) + (num_feats % cols > 0)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(16, 4 * rows))
+    axes = axes.ravel()
+
+    for idx, feat in enumerate(feats):
+        sc = axes[idx].scatter(x=test_glacier['lons'], y=test_glacier['lats'], c=test_glacier[feat], s=1, cmap='jet')
+        axes[idx].set_xticks([])
+        axes[idx].set_yticks([])
+        axes[idx].tick_params(labelbottom=False, labelleft=False)
+        axes[idx].text(0.05, 0.95, feat, transform=axes[idx].transAxes,
+                       fontsize=10, verticalalignment='top', color='black', weight='bold')
+
+    # Hide any unused subplots
+    for i in range(len(feats), len(axes)):
+        axes[i].axis('off')
+
+    plt.tight_layout()
+    plt.show()
