@@ -30,6 +30,23 @@ def haversine(lon1, lat1, lon2, lat2):
     r = 6371 # Radius of earth in kilometers. Determines return value units.
     return c * r
 
+def haversine_vectorized(lon1, lat1, lon2, lat2):
+    """
+    Calculate the great circle distance in kilometers between two sets of points
+    on the earth (specified in decimal degrees). Works with arrays for vectorized calculations.
+    """
+    # Convert decimal degrees to radians
+    lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
+
+    # Haversine formula
+    dlon = lon2 - lon1[:, np.newaxis]  # Broadcasting lon1 across lon2
+    dlat = lat2 - lat1[:, np.newaxis]  # Broadcasting lat1 across lat2
+
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1[:, np.newaxis]) * np.cos(lat2) * np.sin(dlon / 2) ** 2
+    c = 2 * np.arcsin(np.sqrt(a))
+    r = 6371  # Radius of Earth in kilometers
+    return c * r  # Returns distance in kilometers
+
 def lmax_with_covex_hull(geometry, glacier_epsg):
     '''
     This method calculates lmax using the geometry convex hull.
@@ -96,6 +113,19 @@ def get_cmap(name):
 
     if name == 'black_electric_blue':
         cm = LinearSegmentedColormap.from_list(name, ['#000000', '#0000CC'])
+
+    if name == 'dark_green_to_blue':
+        # Dark green to grey, then white, light blue, and blue
+        colors = ['#006400', '#808080', '#FFFFFF', '#ADD8E6', '#0000FF']  # Dark green, grey, white, light blue, blue
+        cm = LinearSegmentedColormap.from_list(name, colors)
+
+    if name == 'dark_green_to_purple':
+        colors = ['#006400', '#808080', '#ADD8E6', '#0000FF', '#800080']  # Dark green, grey, light blue, blue, purple
+        cm = LinearSegmentedColormap.from_list(name, colors)
+
+    elif name == 'grey_to_blue_orange':
+        colors = ['#808080', '#A0D8E6', '#3F00FF', '#800080', '#FFA500']  # Grey, light blue, blue, purple, orange
+        cm = LinearSegmentedColormap.from_list(name, colors)
 
     return cm
 
