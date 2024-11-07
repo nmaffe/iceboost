@@ -53,13 +53,13 @@ iceboost_cat.load_model(model_cat_filename, format='cbm')
 # *********************************************
 # Model deploy
 # *********************************************
-run_deploy_from_csv_list = True
+run_deploy_from_csv_list = False
 if run_deploy_from_csv_list:
     for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
         #glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-01.13696',
         #                                                       rgi=3, version='70G', area=10, seed=None)
-        glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-19.01892', rgi=4, version='70G', area=100, seed=None)
+        glacier_name_for_generation = get_random_glacier_rgiid(name='RGI2000-v7.0-G-11-03885', rgi=4, version='70G', area=0, seed=None)
         #glacier_name_for_generation = 'RGI2000-v7.0-G-11-02596'# , #'RGI2000-v7.0-G-11-02596'
         print(n, glacier_name_for_generation)
         # RGI60-01.13696 RGI60-03.01517 RGI60-05.13501 RGI60-11.01450 RGI2000-v7.0-G-11-02596 RGI60-05.13501
@@ -106,12 +106,11 @@ if run_deploy_from_csv_list:
         deltalat = np.abs(swlat - nelat)
         deltalon = np.abs(swlon - nelon)
         eps = 5./3600
-        focus_mosaic_tiles = create_glacier_tile_dem_mosaic(minx=swlon - (deltalon + eps),
+        focus = create_glacier_tile_dem_mosaic(minx=swlon - (deltalon + eps),
                                     miny=swlat - (deltalat + eps),
                                     maxx=nelon + (deltalon + eps),
                                     maxy=nelat + (deltalat + eps),
                                      rgi=test_glacier_rgi, path_tandemx=config.tandemx_dir)
-        focus = focus_mosaic_tiles.squeeze()
 
         X_test_glacier = test_glacier[config.features]
         y_test_glacier_m = test_glacier[config.millan]
@@ -127,6 +126,8 @@ if run_deploy_from_csv_list:
 
         # ensemble
         y_preds_glacier = 0.5 * (y_preds_glacier_xgb + y_preds_glacier_cat)
+
+        plot_feature_scatter(config, test_glacier)
 
         # Set negative predictions to zero
         y_preds_glacier = np.where(y_preds_glacier < 0, 0, y_preds_glacier)
@@ -348,9 +349,9 @@ if run_deploy_from_csv_list:
 
             if config.deploy_save_figs:
                 plt.savefig(f"{config.model_output_results_dir}{glacier_name_for_generation}.png", dpi=100)
+                plt.close()
 
             plt.show()
-            #plt.close()
             #exit()
 
 
@@ -358,7 +359,7 @@ if run_deploy_from_csv_list:
 # Regional simulation
 def run_rgi_simulation(rgi=None, version=None):
 
-    print(f"Begin regional simulation for region {rgi} version {version}")
+    print(f"Begin regional simulation for region {rgi}, version {version}")
 
     rgi_products = get_rgi_products(rgi, version=version)
     coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
@@ -470,30 +471,84 @@ def run_rgi_simulation(rgi=None, version=None):
         data_array.attrs['volume_farinotti'] = vol_farinotti
         data_array.attrs['thickness_units'] = 'm'
         data_array.attrs['volume_units'] = 'km3'
-        data_array.attrs['method'] = 'gradient-boosted tree ensamble iceboost'
+        data_array.attrs['method'] = 'gradient-boosted tree ensemble iceboost'
         data_array.attrs['author'] = 'Niccolo Maffezzoli, University of California Irvine'
-        #data_array.plot(cmap='jet')
+
+        #data_array.plot(cmap=get_cmap('grey_to_blue_orange'))
         #plt.show()
 
         # 5. save .tif
-        PATH_OUT = config.model_output_global_deploy_dir
-
         if config.deploy_global_save_figs:
-            file_out_tif = f'{PATH_OUT}rgi{rgi}/{gl_id}.tif'
+            PATH_OUT = config.model_output_global_deploy_dir
+            file_out_tif = f'{PATH_OUT}RGI{version}/rgi{rgi}/{gl_id}.tif'
             data_array.rio.to_raster(file_out_tif, compress="deflate")
 
+        # 6. save .tif for mapbox
+        if config.deploy_global_save_figs_mapbox:
+            # For Mapbox
+            PATH_OUT = config.model_output_global_deploy_dir
+            file_out_tif_mapbox = f'{PATH_OUT}RGI{version}/rgi{rgi}/mapbox/{gl_id}_mapbox.tif'
 
-    multicpu = True
+            data_array = data_array.rio.reproject(dst_crs="EPSG:3857") # Web-Mercator
+
+            MAX_VAL_MAPBOX = 800
+
+            data_array = data_array.clip(0, MAX_VAL_MAPBOX)
+
+            data_array = data_array.fillna(0) # Replace NaNs with 0
+
+            cmap = plt.get_cmap('jet', 256)
+            rgba_data = cmap(data_array.values/MAX_VAL_MAPBOX)  # Colors normalized in [0, 1]. This will give an (Nx, Ny, 4) array for RGBA
+
+            rgba_data = rgba_data * 255 # Colors normalized in [0, 255]
+
+            rgba_data[:, :, 3] = 127  # Set the alpha channel (4th channel) to half transparency everywhere
+
+            rgba_data[data_array.values == 0] = 0 # Set to zero where the original data is 0
+
+            rgba_data = rgba_data.astype(np.uint8)  # Convert to uint8
+            #print(rgba_data[:,:,0].max(), rgba_data[:,:,1].max(), rgba_data[:,:,2].max())
+
+            #fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(1, 5)
+            #ax1.imshow(data_array.values, cmap='gray')
+            #ax2.imshow(rgba_data[:, :, 0], cmap='Reds')
+            #ax3.imshow(rgba_data[:, :, 1], cmap='Greens')
+            #ax4.imshow(rgba_data[:, :, 2], cmap='Blues')
+            #ax5.imshow(rgba_data[:, :, 3], cmap='gray')
+            #plt.show()
+
+            #print(max_val, rgb_array.max())
+
+            rgb_data_array = xarray.DataArray(rgba_data, dims=('y', 'x', 'band'),
+                                          coords={'x': data_array.coords['x'], 'y': data_array.coords['y']})
+
+            # Transpose to put the 'band' dimension first
+            rgb_data_array = rgb_data_array.transpose('band', 'y', 'x')
+
+            rgb_data_array.rio.write_nodata(0, inplace=True)
+            rgb_data_array.rio.write_crs("EPSG:3857", inplace=True)
+
+            rgb_data_array.rio.to_raster(file_out_tif_mapbox, compress="LZW", tiled=True, blockxsize=256, blockysize=256)
+            #input('wait')
+
+
+    multicpu = False
     if multicpu:
         Parallel(n_jobs=8, timeout=300)(delayed(process_glacier)(gl_id) for gl_id in tqdm(oggm_rgi_glaciers[name_column_id],
                                                                                     desc=f"rgi {rgi} glaciers",
                                                                                     leave=True))
     else:
+        #oggm_rgi_glaciers = oggm_rgi_glaciers.loc[(oggm_rgi_glaciers[name_column_id] == 'RGI60-06.00475') |
+        #                                          (oggm_rgi_glaciers[name_column_id] == 'RGI60-06.00416')]
+        #oggm_rgi_glaciers = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == 'RGI60-11.01450']
+        #oggm_rgi_glaciers = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == 'RGI2000-v7.0-G-11-02596']
+
         for i, gl_id in tqdm(enumerate(oggm_rgi_glaciers[name_column_id]), total=len(oggm_rgi_glaciers),
                              desc=f"rgi {rgi} glaciers", leave=True):
             process_glacier(gl_id)
-    print(f"Finished regional simulation for rgi {rgi}.")
+    print(f"Finished regional simulation for rgi {rgi}, version {version}.")
 
-run_rgi_simulation_YN = False
+run_rgi_simulation_YN = True
 if run_rgi_simulation_YN:
-    run_rgi_simulation(rgi=11, version='70G')
+    # Test each colormap with a colorbar
+    run_rgi_simulation(rgi=6, version='62')
