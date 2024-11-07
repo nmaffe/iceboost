@@ -1292,10 +1292,14 @@ def populate_glacier_with_metadata(glacier_name,
     nelon = points_df['lons'].max()
     deltalat = np.abs(swlat - nelat)
     deltalon = np.abs(swlon - nelon)
+
+    deltalat = np.maximum(deltalat, 0.1) # Ensure deltalat and deltalon are at least 0.1
+    deltalon = np.maximum(deltalon, 0.1) # Ensure deltalat and deltalon are at least 0.1
+
     lats_xar = xarray.DataArray(points_df['lats'])
     lons_xar = xarray.DataArray(points_df['lons'])
 
-    eps = 5./3600
+    eps = 5./3600 # useless
 
     # We now create the mosaic of the dem clipped around the glacier
     t0_load_dem = time.time()
@@ -1489,14 +1493,31 @@ def populate_glacier_with_metadata(glacier_name,
         # CPU
         t0_dem_smooth = time.time()
         preserve_nans = True
-        focus_filter_50_utm = convolve_fft(focus_utm.values, kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-        focus_filter_75_utm = convolve_fft(focus_utm.values, kernel75, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-        focus_filter_100_utm = convolve_fft(focus_utm.values, kernel100, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-        focus_filter_125_utm = convolve_fft(focus_utm.values, kernel125, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-        focus_filter_150_utm = convolve_fft(focus_utm.values, kernel150, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-        focus_filter_300_utm = convolve_fft(focus_utm.values, kernel300, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-        focus_filter_450_utm = convolve_fft(focus_utm.values, kernel450, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-        focus_filter_af_utm = convolve_fft(focus_utm.values, kernelaf, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        #focus_filter_50_utm = convolve_fft(focus_utm.values, kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        #focus_filter_75_utm = convolve_fft(focus_utm.values, kernel75, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        #focus_filter_100_utm = convolve_fft(focus_utm.values, kernel100, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        #focus_filter_125_utm = convolve_fft(focus_utm.values, kernel125, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        #focus_filter_150_utm = convolve_fft(focus_utm.values, kernel150, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        #focus_filter_300_utm = convolve_fft(focus_utm.values, kernel300, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        #focus_filter_450_utm = convolve_fft(focus_utm.values, kernel450, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        #focus_filter_af_utm = convolve_fft(focus_utm.values, kernelaf, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        #print(np.sum(np.isnan(focus_utm.values)))
+
+        # Step 1: Calculate padding width from (likely) the biggest kernel's dimensions
+        pad_width = kernelaf.array.shape[0] // 2
+        # Step 2: Pad the data
+        padded_data = np.pad(focus_utm.values, pad_width, mode='edge')
+
+        #focus_filter_50_utm = convolve_fft(focus_utm.values, kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
+        focus_filter_50_utm = convolve_fft(padded_data, kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_75_utm = convolve_fft(padded_data, kernel75, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_100_utm = convolve_fft(padded_data, kernel100, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_125_utm = convolve_fft(padded_data, kernel125, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_150_utm = convolve_fft(padded_data, kernel150, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_300_utm = convolve_fft(padded_data, kernel300, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_450_utm = convolve_fft(padded_data, kernel450, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_af_utm = convolve_fft(padded_data, kernelaf, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
+
         t1_dem_smooth = time.time()
         print(f"Time to smooth dem: {t1_dem_smooth - t0_dem_smooth}") if verbose else None
 
@@ -1511,7 +1532,7 @@ def populate_glacier_with_metadata(glacier_name,
         focus_filter_xarray_af_utm = focus_utm.copy(data=focus_filter_af_utm)
 
         #fig, ax = plt.subplots()
-        #focus_utm.plot(cmap='terrain')
+        #focus_filter_xarray_af_utm.plot(cmap='terrain')
         #plt.show()
 
         # create xarray slopes (differentiating an xarray is much slower than using numpy)
@@ -1543,7 +1564,7 @@ def populate_glacier_with_metadata(glacier_name,
         dz_dlat_np_150, dz_dlon_np_150 = np.gradient(focus_filter_150_utm, -res_utm_metres, res_utm_metres)
         dz_dlat_np_300, dz_dlon_np_300 = np.gradient(focus_filter_300_utm, -res_utm_metres, res_utm_metres)
         dz_dlat_np_450, dz_dlon_np_450 = np.gradient(focus_filter_450_utm, -res_utm_metres, res_utm_metres)
-        dz_dlat_np_af, dz_dlon_np_af = np.gradient(focus_filter_af_utm, -res_utm_metres, res_utm_metres)
+        dz_dlat_np_af, dz_dlon_np_af = np.gradient(focus_filter_af_utm, -res_utm_metres, res_utm_metres, edge_order=2)
 
         slope_50_xar = focus_utm.copy(data=(dz_dlat_np_50 ** 2 + dz_dlon_np_50 ** 2) ** 0.5)
         slope_75_xar = focus_utm.copy(data=(dz_dlat_np_75 ** 2 + dz_dlon_np_75 ** 2) ** 0.5)
@@ -1557,13 +1578,17 @@ def populate_glacier_with_metadata(glacier_name,
         #slat300, slon300 = focus_filter_xarray_300_utm.differentiate(coord='y'), focus_utm.differentiate(coord='x')
         #slope_300_xar_after_dem_conv = slope_300_xar.copy(deep=True, data=(slat300 ** 2 + slon300 ** 2) ** 0.5)
 
-        #fig, (ax1, ax2, ax3) = plt.subplots(1,3)
-        #slope_300_xar.plot(ax=ax1)
-        #focus_filter_xarray_300_utm.plot(ax=ax2, cmap='terrain')
+        #fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(1,5)
+        #focus_utm.plot(ax=ax1, cmap='terrain')
+        #focus_filter_xarray_450_utm.plot(ax=ax2, cmap='terrain')
+        #focus_filter_xarray_af_utm.plot(ax=ax3, cmap='terrain')
+        #slope_50_xar.plot(ax=ax4)
+        #slope_af_xar.plot(ax=ax5)
         #slope_300_xar_after_dem_conv.plot(ax=ax3)
         #plt.show()
 
     # Calculate curvature and aspect using xrspatial
+    # Note that artifacts appear if nans are present at the boundary
     curv_50 = xrspatial.curvature(focus_filter_xarray_50_utm)
     curv_100 = xrspatial.curvature(focus_filter_xarray_100_utm)
     curv_150 = xrspatial.curvature(focus_filter_xarray_150_utm)
@@ -1572,7 +1597,7 @@ def populate_glacier_with_metadata(glacier_name,
     curv_af = xrspatial.curvature(focus_filter_xarray_af_utm)
 
     #fig, ax = plt.subplots()
-    #curv_af.plot()
+    #curv_450.plot()
     #plt.show()
 
     #ttest0 = time.time()
@@ -2244,10 +2269,11 @@ def populate_glacier_with_metadata(glacier_name,
         # Reproject to glacier_epsg. This is approximately 0.13 s and the main computational cost for this method
         box_geoms_epsg = box_geoms.to_crs(glacier_epsg)
 
-        # Extract all coordinates of GeoSeries geometries
+        # Extract all coordinates of GeoSeries geometries (0.02 s)
         geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in box_geoms_epsg.geometry.exterior])
 
-        # Reprojecting very big geometries cause distortion. Let's remove these points. Is this necessary ?
+        # Reprojecting very big geometries cause distortion. Let's remove these points. (0.008s)
+        # Is this necessary ?
         valid_coords_mask = (
                 (geoms_coords_array[:, 0] >= -1e7) & (geoms_coords_array[:, 0] <= 1e7) &
                 (geoms_coords_array[:, 1] >= -1e7) & (geoms_coords_array[:, 1] <= 1e7)
@@ -2268,6 +2294,23 @@ def populate_glacier_with_metadata(glacier_name,
         min_distances_ocean /= 1000.
 
         points_df['dist_from_ocean'] = min_distances_ocean
+
+    plot_dist_from_ocean = False
+    if plot_dist_from_ocean:
+        fig, ax = plt.subplots(figsize=(8, 7))
+        ax.scatter(geoms_coords_array[:, 0], geoms_coords_array[:, 1], s=1)
+        ax.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='r')  # first entry is outside border
+        for geom in geoseries_geometries_epsg.loc[1:]:
+            ax.plot(*geom.xy, lw=1, c='grey')
+        s1 = ax.scatter(x=points_coords_array[:, 0], y=points_coords_array[:, 1], s=1, c=points_df['dist_from_ocean'], zorder=0)
+        cbar = plt.colorbar(s1, ax=ax)
+        cbar.set_label('Distance to closest ice free region (km)', labelpad=15, rotation=90, fontsize=16)
+        ax.set_xlabel('Eastings (m)', fontsize=16)
+        ax.set_ylabel('Northings (m)', fontsize=16)
+        ax.tick_params(axis='both', labelsize=16)
+        cbar.ax.tick_params(labelsize=16)
+        plt.tight_layout()
+        plt.show()
 
     tdistocean1 = time.time()
     tdistocean = tdistocean1 - tdistocean0
@@ -2419,20 +2462,31 @@ def populate_glacier_with_metadata(glacier_name,
     """ Drop features and sanity check """
 
     # Drop features
-    columns_vels_to_drop = ['vx', 'vy', 'vx_gf50', 'vx_gf100', 'vx_gf150', 'vx_gf300', 'vx_gf450', 'vx_gfa',
-                       'vy_gf50', 'vy_gf100', 'vy_gf150', 'vy_gf300', 'vy_gf450', 'vy_gfa',
-                       'dvx_dx', 'dvx_dy', 'dvy_dx', 'dvy_dy', ]
+    #columns_vels_to_drop = ['vx', 'vy', 'vx_gf50', 'vx_gf100', 'vx_gf150', 'vx_gf300', 'vx_gf450', 'vx_gfa',
+    #                   'vy_gf50', 'vy_gf100', 'vy_gf150', 'vy_gf300', 'vy_gf450', 'vy_gfa',
+    #                   'dvx_dx', 'dvx_dy', 'dvy_dx', 'dvy_dy', ]
 
-    columns_slope_to_drop = ['slope_lon', 'slope_lat', 'slope_lon_gf50', 'slope_lat_gf50',
-                             'slope_lon_gf75', 'slope_lat_gf75', 'slope_lon_gf100', 'slope_lat_gf100',
-                             'slope_lon_gf125', 'slope_lat_gf125', 'slope_lon_gf150', 'slope_lat_gf150',
-                             'slope_lon_gf300', 'slope_lat_gf300', 'slope_lon_gf450', 'slope_lat_gf450',
-                             'slope_lat_gfa', 'slope_lon_gfa']
+    #columns_slope_to_drop = ['slope_lon', 'slope_lat', 'slope_lon_gf50', 'slope_lat_gf50',
+    #                         'slope_lon_gf75', 'slope_lat_gf75', 'slope_lon_gf100', 'slope_lat_gf100',
+    #                         'slope_lon_gf125', 'slope_lat_gf125', 'slope_lon_gf150', 'slope_lat_gf150',
+    #                         'slope_lon_gf300', 'slope_lat_gf300', 'slope_lon_gf450', 'slope_lat_gf450',
+    #                         'slope_lat_gfa', 'slope_lon_gfa']
     #points_df.drop(columns=columns_slope_to_drop, inplace=True) #columns_vels_to_drop
 
     print(f"Important: we have generated {points_df['ith_m'].isna().sum()} points where Millan ith is nan.") if verbose else None
     print(f"Important: we have generated {points_df['ith_f'].isna().sum()} points where Farinotti ith is nan.") if verbose else None
 
+    '''    fig, (ax1, ax2, ax3) = plt.subplots(1,3)
+        s1 = ax1.scatter(x=points_df['lons'], y=points_df['lats'], c=points_df['elevation'], s=1)
+        s2 = ax2.scatter(x=points_df['lons'], y=points_df['lats'], c=points_df['slope50'], s=1)
+        s3 = ax3.scatter(x=points_df['lons'], y=points_df['lats'], c=points_df['curv_450'], s=1)
+        cb1 = plt.colorbar(s1)
+        cb2 = plt.colorbar(s2)
+        cb3 = plt.colorbar(s3)
+        for ax in (ax1, ax2, ax3):
+            ax.tick_params(labelbottom=False, labelleft=False)
+        plt.show()
+    '''
     # Sanity check
     # The only survived nans should be only in ith_m, ith_f
     # Check for the presence of nans in the generated dataset.
@@ -2465,7 +2519,7 @@ if __name__ == "__main__":
 
     config = misc.get_config(args.config)  # import from config.yaml
 
-    glacier_name = 'RGI60-11.01450'  # 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
+    glacier_name = 'RGI60-14.02559'  # 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
     # ultra weird: RGI60-02.03411 millan has ith but no ice velocity
     # 'RGI60-05.10315' #RGI60-09.00909 RGI60-05.10315 RGI60-05.10315
 
