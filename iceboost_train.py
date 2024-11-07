@@ -126,7 +126,6 @@ glathida_rgis = pd.read_csv(config.metadata_csv_file, low_memory=False)
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-05.04255'])]
 #glathida_rgis = glathida_rgis[~glathida_rgis['RGIId'].isin(['RGI60-05.04288'])]
 
-
 # Regional statistics for Millan and Farinotti
 calc_regional_stats_millan_and_farinotti = False
 if calc_regional_stats_millan_and_farinotti:
@@ -141,8 +140,8 @@ if calc_regional_stats_millan_and_farinotti:
 
 # Add some features
 glathida_rgis['lats'] = glathida_rgis['POINT_LAT']
-glathida_rgis['elevation_from_Zmin'] = glathida_rgis['elevation'] - glathida_rgis['Zmin']
-glathida_rgis['deltaZ'] = glathida_rgis['Zmax'] - glathida_rgis['Zmin']
+#glathida_rgis['elevation_from_Zmin'] = glathida_rgis['elevation'] - glathida_rgis['Zmin']
+#glathida_rgis['deltaZ'] = glathida_rgis['Zmax'] - glathida_rgis['Zmin']
 # new
 glathida_rgis['elevation_from_zmin'] = glathida_rgis['elevation'] - glathida_rgis['zmin']
 glathida_rgis['deltaz'] = glathida_rgis['zmax'] - glathida_rgis['zmin']
@@ -565,7 +564,7 @@ if plot_spatial_test_predictions:
 # *********************************************
 # Model deploy
 # *********************************************
-glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-11.01450', rgi=11, version='70G', area=10, seed=None)
+glacier_name_for_generation = get_random_glacier_rgiid(name='RGI2000-v7.0-G-11-01756', rgi=11, version='70G', area=0, seed=None)
 #glacier_name_for_generation = 'RGI2000-v7.0-G-11-02596'
 # RGI60-01.13696
 # RGI60-19.00748 molto bello
@@ -630,15 +629,6 @@ lons = test_glacier['lons'].to_numpy()
 h_egm2008 = calc_geoid_heights(lons=lons, lats=lats, h_wgs84=h_wgs84)
 
 
-#fig, (ax1, ax2, ax3) = plt.subplots(1,3)
-#s = ax1.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=1, c=test_glacier['dist_from_border_km_geom'])
-#s2 = ax2.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=1, c=test_glacier['dist_from_ocean'])
-#s3 = ax3.scatter(x=test_glacier['lons'], y=test_glacier['lats'], s=1, c=test_glacier['curv_50'])
-#cbar1 = plt.colorbar(s)
-#cbar2 = plt.colorbar(s2)
-#cbar3 = plt.colorbar(s3)
-#plt.show()
-
 X_test_glacier = test_glacier[CFG.features]
 perturbate_features = False
 if perturbate_features:
@@ -657,6 +647,8 @@ y_preds_glacier_xgb = best_model_xgb.predict(dtest)
 y_preds_glacier_cat = best_model_cat.predict(X_test_glacier)
 
 y_preds_glacier = 0.5 * (y_preds_glacier_xgb + y_preds_glacier_cat)
+
+plot_feature_scatter(config, test_glacier)
 
 # Set negative predictions to zero
 y_preds_glacier = np.where(y_preds_glacier < 0, 0, y_preds_glacier)
@@ -691,17 +683,15 @@ nelon = test_glacier['lons'].max()
 deltalat = np.abs(swlat - nelat)
 deltalon = np.abs(swlon - nelon)
 eps = 5./3600
-focus_mosaic_tiles = create_glacier_tile_dem_mosaic(minx=swlon - (deltalon + eps),
+focus = create_glacier_tile_dem_mosaic(minx=swlon - (deltalon + eps),
                             miny=swlat - (deltalat + eps),
                             maxx=nelon + (deltalon + eps),
                             maxy=nelat + (deltalat + eps),
                              rgi=test_glacier_rgi, path_tandemx=config.tandemx_dir)
-focus = focus_mosaic_tiles.squeeze()
-
 
 # Get Farinotti file and calculate the volume
 #todo: currently import farinotti only if i'm running rgi62. Therefore this does not work for rgi7
-if not no_farinotti_data:
+if (version =='62' and not no_farinotti_data):
     test_glacier_folder_farinotti = glob(f"{config.farinotti_icethickness_dir}/*{test_glacier_rgi}/")[0]
     ice_farinotti = rioxarray.open_rasterio(test_glacier_folder_farinotti+glacier_name_for_generation+'_thickness.tif')
     res_farinotti = ice_farinotti.rio.resolution()[0]
