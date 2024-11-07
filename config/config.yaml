@@ -33,7 +33,7 @@ deploy_save_figs: 0
 
 # save regional run figures and tif
 deploy_global_save_figs: 0
-deploy_global_save_figs_mapbox: 1
+deploy_global_save_figs_mapbox: 0
 
 # configs for feature fetching
 graph_max_layer_depth: 3 # maximum depth consider in the graph used to calculate the glacier cluster
