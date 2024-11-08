@@ -243,7 +243,7 @@ def populate_glacier_with_metadata(glacier_name,
             e, n = Transformer.from_crs("EPSG:4326", tile_ith.rio.crs).transform(cenLat, cenLon)
             if left < e < right and bottom < n < top:
                 inside_millan = True
-                print(f"Found glacier in Millan tile: {file_ith}")
+                print(f"Found glacier in Millan tile: {file_ith}") if verbose else None
                 break
 
         if inside_millan:
@@ -2456,6 +2456,11 @@ def populate_glacier_with_metadata(glacier_name,
     # Imputation for smb (should be only needed when interpolating racmo)
     points_df['smb'] = median_imputer.fit_transform(points_df[['smb']])
 
+    # Imputation for slope, aspect and curvature (when xarray struggles bad geometry and produces nans, i.e. with RGI60-19.01285
+    points_df['slope'] = points_df['slope'].fillna(points_df['slope100'].median())
+    points_df['aspect'] = points_df['curvature'].fillna(0)
+    points_df['curvature'] = points_df['curvature'].fillna(0)
+
     t1_imputation = time.time()
     timp = t1_imputation - t0_imputation
     # ---------------------------------------------------------------------------------------------
@@ -2490,6 +2495,8 @@ def populate_glacier_with_metadata(glacier_name,
     # Sanity check
     # The only survived nans should be only in ith_m, ith_f
     # Check for the presence of nans in the generated dataset.
+    print(points_df.isna().sum())
+    input('wait')
     assert points_df.drop(columns=['ith_m', 'ith_f']).isnull().any().any() == False, \
         "Nans in generated dataset other than in Millan/Farinotti ice thickness! Something to check."
 
@@ -2519,9 +2526,10 @@ if __name__ == "__main__":
 
     config = misc.get_config(args.config)  # import from config.yaml
 
-    glacier_name = 'RGI60-14.02559'  # 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
+    glacier_name = 'RGI60-19.01285'  # 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
     # ultra weird: RGI60-02.03411 millan has ith but no ice velocity
     # 'RGI60-05.10315' #RGI60-09.00909 RGI60-05.10315 RGI60-05.10315
+    # 'RGI60-19.01285' bad slope
 
     test_glacier_rgi, version = get_version_and_rgi_from_id(glacier_name)
     rgi_products = get_rgi_products(test_glacier_rgi, version=version)
