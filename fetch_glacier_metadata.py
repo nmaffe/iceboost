@@ -2495,8 +2495,6 @@ def populate_glacier_with_metadata(glacier_name,
     # Sanity check
     # The only survived nans should be only in ith_m, ith_f
     # Check for the presence of nans in the generated dataset.
-    print(points_df.isna().sum())
-    input('wait')
     assert points_df.drop(columns=['ith_m', 'ith_f']).isnull().any().any() == False, \
         "Nans in generated dataset other than in Millan/Farinotti ice thickness! Something to check."
 
