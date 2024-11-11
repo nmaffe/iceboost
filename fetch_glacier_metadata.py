@@ -1971,33 +1971,7 @@ def populate_glacier_with_metadata(glacier_name,
     print(f"Calculating the distances using glacier geometries... ") if verbose else None
     tdist0 = time.time()
 
-    # to remove
-    def add_new_neighbors(neighbors, df):
-        """ I give a list of neighbors and I should return a new list with added neighbors"""
-        for id in neighbors:
-            #neighbors_wrt_id = df[df['RGIId_1'] == id]['RGIId_2'].unique() # old, less precise
-            # new version. We don't care whether the glacier is in 1 or 2. This is accurate as method with graph
-            neighbors_wrt_1 = df[df['RGIId_1'] == id]['RGIId_2'].unique()
-            neighbors_wrt_2 = df[df['RGIId_2'] == id]['RGIId_1'].unique()
-            neighbors_wrt_id = np.concatenate((neighbors_wrt_1, neighbors_wrt_2))
-            neighbors = np.append(neighbors, neighbors_wrt_id)
-        neighbors = np.unique(neighbors)
-        return neighbors
-
-    # to remove
-    def find_cluster_RGIIds(id, df):
-        neighbors0 = np.array([id])
-        len0 = len(neighbors0)
-        neighbors1 = add_new_neighbors(neighbors0, df)
-        len1 = len(neighbors1)
-        while len1 > len0:
-            len0 = len1
-            neighbors1 = add_new_neighbors(neighbors1, df)
-            len1 = len(neighbors1)
-        return neighbors1
-
     # Calculate intersects of all glaciers in the cluster
-    # list_cluster_RGIIds = find_cluster_RGIIds(glacier_name, oggm_rgi_intersects)# (SLOW NESTED LOOP METHOD)
     list_cluster_RGIIds = find_cluster_with_graph(rgi_graph, glacier_name, max_depth=graph_max_layer_depth)
     no_glaciers_in_cluster = len(list_cluster_RGIIds)
     print(f"Cluster: {no_glaciers_in_cluster} glaciers created in: {time.time()-tdist0:.3f}") if verbose else None
