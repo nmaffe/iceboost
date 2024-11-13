@@ -1,3 +1,4 @@
+import time
 import utm
 import scipy
 import random
@@ -7,6 +8,7 @@ import geopandas as gpd
 from pyproj import Transformer
 from sklearn.neighbors import KDTree
 from scipy.spatial import distance_matrix
+from shapely.geometry import Point, Polygon, LineString, MultiLineString, box
 from oggm import utils
 import xgboost as xgb
 import catboost as cb
@@ -419,3 +421,55 @@ def plot_feature_scatter(config, test_glacier):
 
     plt.tight_layout()
     plt.show()
+
+
+def generate_points(gdf_ext=None, gdf_nuns=None, n_points_regression=None, seed=None):
+
+    points = {'lons': [], 'lats': [], 'nunataks': []}
+    if seed is not None: np.random.seed(seed)
+
+    llx, lly, urx, ury = gdf_ext.total_bounds # geometry bounds
+
+    while (len(points['lons']) < n_points_regression):
+        batch_size = min(n_points_regression, n_points_regression - len(points['lons']))  # Adjust batch size as needed
+        r_lons = np.random.uniform(llx, urx, batch_size)
+        r_lats = np.random.uniform(lly, ury, batch_size)
+        points_batch_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(r_lons, r_lats), crs="EPSG:4326")
+
+        # A bit faster
+        # 1) Select only those points generated inside the external polygon
+        # points_in_glacier_gdf = gpd.sjoin(points_batch_gdf, gl_geom_ext_gdf, how="inner", predicate="within").drop(columns=['index_right'])
+        # 2) Exclude points that are inside any internal polygons
+        # points_in_internal_polygons_gdf = gpd.sjoin(points_in_glacier_gdf, gl_geom_nunataks_gdf, how="left", predicate="within")
+        # points_not_in_nunataks_gdf = points_in_internal_polygons_gdf[points_in_internal_polygons_gdf.index_right.isna()]
+
+        # A bit slower
+        # 1) First we select only those points generated inside the glacier
+        points_yes_no_ext_gdf = gpd.sjoin(points_batch_gdf, gdf_ext, how="left", predicate="within")
+        points_in_glacier_gdf = points_yes_no_ext_gdf[~points_yes_no_ext_gdf.index_right.isna()].drop(
+            columns=['index_right'])
+        indexes_of_points_inside = points_in_glacier_gdf.index
+        # 2) Then we get rid of all those generated inside nunataks
+        points_yes_no_nunataks_gdf = gpd.sjoin(points_batch_gdf.loc[indexes_of_points_inside], gdf_nuns,
+                                               how="left", predicate="within")
+        points_not_in_nunataks_gdf = points_yes_no_nunataks_gdf[points_yes_no_nunataks_gdf.index_right.isna()].drop(
+            columns=['index_right'])
+
+        points['lons'].extend(points_not_in_nunataks_gdf['geometry'].x.tolist())
+        points['lats'].extend(points_not_in_nunataks_gdf['geometry'].y.tolist())
+        points['nunataks'].extend([0.0] * len(points_not_in_nunataks_gdf))
+
+
+    plot_gen_points = False
+    if plot_gen_points:
+        points_in_nunataks_gdf = points_yes_no_nunataks_gdf[~points_yes_no_nunataks_gdf.index_right.isna()].drop(
+            columns=['index_right'])
+        fig, ax = plt.subplots()
+        ax.plot(*gl_geom.exterior.xy, color='blue')
+        gl_geom_nunataks_gdf.plot(ax=ax, color='orange', alpha=0.5)
+        # points_in_glacier_gdf.plot(ax=ax, color='red', alpha=0.5, markersize=1, zorder=2)
+        points_not_in_nunataks_gdf.plot(ax=ax, color='blue', alpha=0.5, markersize=1, zorder=2)
+        points_in_nunataks_gdf.plot(ax=ax, color='red', alpha=0.5, markersize=1, zorder=2)
+        plt.show()
+
+    return points
