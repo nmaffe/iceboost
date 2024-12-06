@@ -16,7 +16,7 @@ NSIDC_icethickness_Greenland_dir: '/media/maffe/nvme/Greenland_NSIDC/thickness/'
 NSIDC_icethickness_Antarctica_dir: '/media/maffe/nvme/Antarctica_NSIDC/thickness/NSIDC-0756/' # BedMachine v3
 
 model_input_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/'
-model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20241029/'
+model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20241119/'
 model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/'
 #model_filename_xgb: 'iceboost_xgb_20240731.json'
 #model_filename_cat: 'iceboost_cat_20240731.cbm'
@@ -32,11 +32,13 @@ metadata_csv_file: '/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/dat
 deploy_save_figs: 0
 
 # save regional run figures and tif
-deploy_global_save_figs: 0
+deploy_global_save_figs: 1
 
 # configs for feature fetching
 graph_max_layer_depth: 3 # maximum depth consider in the graph used to calculate the glacier cluster
 kdtree_dist_max_k_geometries: 99999 # maximum number of geometries considered in dist method.
+deploy_mode: 'auto' # ('auto', 'single')
+n_jobs: 4 # multiprocessing
 
 # configs for model inference
 #featuresBase: &base ['Area', 'Perimeter', 'Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'Aspect', 'TermType',
@@ -56,7 +58,8 @@ featuresVel: &vel ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa']
 features:
     - *base
     - *vel
-n_points_regression: 30000
+n_points_regression_single: 30000
+n_points_regression_cluster: 60000
 target: 'THICKNESS'
 millan: 'ith_m'
 farinotti: 'ith_f'
