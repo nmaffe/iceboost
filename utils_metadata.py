@@ -1,11 +1,12 @@
 import time
 import utm
+import warnings
 import scipy
 import random
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from pyproj import Transformer
+from pyproj import Proj, Transformer, Geod
 from sklearn.neighbors import KDTree
 from scipy.spatial import distance_matrix
 from shapely.geometry import Point, Polygon, LineString, MultiLineString, box
@@ -138,45 +139,69 @@ def calc_geoid_heights(lons=None, lats=None, h_wgs84=None):
     _, _, h_egm2008 = transformer.transform(lons, lats, h_wgs84)
     return h_egm2008
 
-def calc_volume_glacier(y1=None, y2=None, area=0, h_egm2008=None):
+#def calc_volume_glacier(y1=None, y2=None, area=0, h_egm2008=None):
+def calc_volume_glacier(y=None, area=0, h_egm2008=None):
+
     '''
     :param y1: numpy.ndarray. Ice thickness [m]
     :param y2: numpy.ndarray. Ice thickness [m]
     :param area: float [km2]
     :return: volume [km3].
     '''
-    y_xgb = y1
-    y_cat = y2
-    N = len(y1)
+    #y_xgb = y1
+    #y_cat = y2
+    #N = len(y1)
+    N = len(y)
     f = 0.001 * area / N
 
     # Millan or Farinotti
-    if y2 is None:
-        volume = np.sum(y1) * f
-        return volume
+    #if y2 is None:
+    #    volume = np.sum(y1) * f
+    #    return volume
 
     # iceboost
-    else:
-        y_mean = 0.5 * (y_xgb + y_cat)
-        y_mean = np.where(y_mean < 0, 0, y_mean)
+    #else:
+    #y_mean = 0.5 * (y_xgb + y_cat)
+    #y_mean = np.where(y_mean < 0, 0, y_mean)
 
-        # volume ice
-        volume = np.sum(y_mean) * f
-        # volume ice above sea level
-        #volume_af = np.sum(np.where(h_egm2008 - y_mean > 0, y_mean, h_egm2008)) * f
-        # volume ice below sea level
-        volume_bsl = np.sum(np.where(h_egm2008 - y_mean > 0, 0.0, y_mean - h_egm2008)) * f
+    # volume ice
+    #volume = np.sum(y_mean) * f
+    volume = np.sum(y) * f
+    # volume ice above sea level
+    #volume_af = np.sum(np.where(h_egm2008 - y_mean > 0, y_mean, h_egm2008)) * f
+    # volume ice below sea level
+    #volume_bsl = np.sum(np.where(h_egm2008 - y_mean > 0, 0.0, y_mean - h_egm2008)) * f
+    volume_bsl = np.sum(np.where(h_egm2008 - y > 0, 0.0, y - h_egm2008)) * f
 
-        err_points = np.std((y_xgb, y_cat), axis=0)
-        # This error considers the point-wise spread between the models
-        err_volume_points = np.sqrt(np.sum(err_points**2)) * f
-        # This error is the semi-difference of the 2 modeled volumes.
-        err_volume_range = 0.5 * np.abs(np.sum(y_xgb) - np.sum(y_cat)) * f
-        # Add in quadrature the two errors
-        err_volume = np.sqrt(err_volume_points**2 + err_volume_range**2)
+    #err_points = np.std((y_xgb, y_cat), axis=0)
+    err_points = 0
+    # This error considers the point-wise spread between the models
+    err_volume_points = np.sqrt(np.sum(err_points**2)) * f
+    # This error is the semi-difference of the 2 modeled volumes.
+    #err_volume_range = 0.5 * np.abs(np.sum(y_xgb) - np.sum(y_cat)) * f
+    err_volume_range = 0
+    # Add in quadrature the two errors
+    err_volume = np.sqrt(err_volume_points**2 + err_volume_range**2)
 
-        return volume, err_volume, volume_bsl
+    return volume, err_volume, volume_bsl
 
+def calc_volume_glacier_from_ar(ar=None, area=0):
+    """
+    :param ar: xarray with 'thickness' and 'h_egm2008' fields
+    :param area: glacier area
+    :return: volume (km3) and volume below sea level (km3)
+    """
+    vals_thickness_np = ar['thickness'].values
+    vals_h_egm2008_np = ar['h_egm2008'].values
+    N = np.count_nonzero(~np.isnan(vals_thickness_np))
+    f = 0.001 * area / N
+
+    # Calculate the volume
+    vol = np.nansum(vals_thickness_np) * f
+    vol_bsl = np.nansum(
+        np.where(vals_h_egm2008_np - vals_thickness_np > 0, 0.0, vals_thickness_np - vals_h_egm2008_np)) * f
+
+    return vol, vol_bsl
 
 def get_random_glacier_rgiid(name=None, rgi=11, version=None, area=None, seed=None):
     """Provide a rgi number and seed. This method returns a
@@ -351,6 +376,52 @@ def find_cluster_with_graph(graph, start_node, max_depth=None):
 
     return list(nodes_at_depth)
 
+
+def get_possible_cluster(graph, start_node, glacier_epsg, rgi, oggm_rgi_glaciers, name_column_id):
+    if not graph.has_node(start_node):
+        return False  # Return False if the start node is not in the graph (isolated glacier)
+
+    # Step 1: Create a cluster, i.e. all glaciers connected to the start glacier
+    cluster_nodes = networkx.node_connected_component(graph, start_node)
+
+    # Step 2: Extract cluster info
+    cluster = graph.subgraph(cluster_nodes)
+    cluster_min_depth = networkx.radius(cluster)
+    cluster_no_nodes = cluster.number_of_nodes()
+    cluster_no_edges = cluster.number_of_edges()
+    if rgi == 3: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 50 and cluster_no_edges <= 90)
+    elif rgi == 4: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
+    elif rgi == 5: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
+    elif rgi == 6: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 100 and cluster_no_edges <= 999)
+    elif rgi == 7: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
+    elif rgi == 9: is_low_complexity = (cluster_min_depth <= 12 and cluster_no_nodes <= 144 and cluster_no_edges <= 252)
+    elif rgi == 19: is_low_complexity = (cluster_min_depth <= 3 and cluster_no_nodes <= 30 and cluster_no_edges <= 40)
+    else: raise ValueError(f"Deploy on cluster not supported for rgi {rgi}")
+    #print(cluster_min_depth, cluster_no_nodes, cluster_no_edges, is_low_complexity)
+
+    # Step 3: If cluster too complex, exit.
+    if is_low_complexity is False:
+        return False
+
+    # Step 4: Initialize a dataframe with cluster ids, Area, Perimeter, lmax
+    df_cluster = pd.DataFrame(0.0, index=list(cluster_nodes), columns=['Area', 'Perimeter', 'lmax'])
+    df_cluster.index.name = 'cluster_IDs'
+    for glacier_name in df_cluster.index:
+        gl_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == glacier_name]
+        gl_geom = gl_df['geometry'].item()  # glacier geometry Polygon
+        gl_geom_ext = Polygon(gl_geom.exterior)
+        gl_geom_ext_gdf = gpd.GeoDataFrame(geometry=[gl_geom_ext], crs="EPSG:4326")
+        lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg) # we use the epsg of the starting glacier for all
+        area, perimeter = Geod(ellps="WGS84").geometry_area_perimeter(gl_geom)
+        area = abs(area) * 1e-6  # km^2
+        df_cluster.loc[glacier_name, 'Area'] = area
+        df_cluster.loc[glacier_name, 'Perimeter'] = perimeter
+        df_cluster.loc[glacier_name, 'lmax'] = lmax
+        #print(glacier_name, '\t', area, perimeter, lmax)
+
+    # Return cluster dataframe with IDs, Area, Perimeter and lmax values
+    return df_cluster
+
 def normalized_elevation(h, Hmin, Hmax):
     '''
     :param h: elevation (accepted types are scalar, numpy array or pandas series)
@@ -422,6 +493,68 @@ def plot_feature_scatter(config, test_glacier):
     plt.tight_layout()
     plt.show()
 
+def generate_points_on_grid(gdf_ext=None, gdf_nuns=None, max_points=None):
+
+    # Get the bounding box of the external boundary
+    llx, lly, urx, ury = gdf_ext.total_bounds
+
+    # Calculate bounding box width and height
+    bbox_width = urx - llx
+    bbox_height = ury - lly
+    bbox_height_meters = 1000 * haversine(llx, lly, llx, ury)
+    bbox_width_meters = 1000 * haversine(llx, lly, urx, lly)
+    aspect_ratio = bbox_height_meters / bbox_width_meters
+    # print("Box height and width:", bbox_height_meters, bbox_width_meters, "meters")
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        bbox_area = gdf_ext.geometry.area.iloc[0] # area in deg squared
+
+    # Calculate Base resolution derived from total area and max points
+    base_resolution = np.sqrt(bbox_area / max_points)
+    #print("Base resolution:", base_resolution, "Aspect ratio:", aspect_ratio)
+
+    # Adjust grid resolution for longitude and latitude for aspect ratio
+    lon_resolution = base_resolution / np.sqrt(aspect_ratio)
+    lat_resolution = base_resolution * np.sqrt(aspect_ratio)
+    #print("Grid resolution:", lon_resolution, lat_resolution)
+
+    # Generate grid points
+    x_coords = np.arange(llx-0.001, urx+0.001, lon_resolution)
+    y_coords = np.arange(lly-0.001, ury+0.001, lat_resolution)
+    xx, yy = np.meshgrid(x_coords, y_coords)
+    grid_points = gpd.GeoDataFrame(geometry=gpd.points_from_xy(xx.ravel(), yy.ravel()), crs="EPSG:4326")
+
+    # Filter points inside the glacier boundary
+    points_in_glacier_gdf = gpd.sjoin(grid_points, gdf_ext, how="inner", predicate="within").drop(columns=['index_right'])
+
+    # Remove points inside nunataks
+    if gdf_nuns is not None and not gdf_nuns.empty:
+        points_not_in_nunataks_gdf = gpd.sjoin(points_in_glacier_gdf, gdf_nuns, how="left", predicate="within")
+        valid_points_gdf = points_not_in_nunataks_gdf[points_not_in_nunataks_gdf.index_right.isna()].drop(
+            columns=['index_right'])
+    else:
+        valid_points_gdf = points_in_glacier_gdf
+
+    # Prepare dictionary output
+    points = {
+        "lons": valid_points_gdf.geometry.x.tolist(),
+        "lats": valid_points_gdf.geometry.y.tolist(),
+        "nunataks": [0.0] * len(valid_points_gdf)
+    }
+
+    plot_gen_points = False
+    if plot_gen_points:
+        fig, ax = plt.subplots()
+        gdf_ext.plot(ax=ax, ec='k', fc='none', linewidth=2)
+        if len(gdf_nuns)>0: gdf_nuns.plot(ax=ax, ec='orange', fc='none')
+        valid_points_gdf.plot(ax=ax, color='blue', alpha=0.5, markersize=1)
+        plt.show()
+
+    #print(f"We have generated: {len(points["lons"])} points")
+
+    return points
+
 
 def generate_points(gdf_ext=None, gdf_nuns=None, n_points_regression=None, seed=None):
 
@@ -465,11 +598,148 @@ def generate_points(gdf_ext=None, gdf_nuns=None, n_points_regression=None, seed=
         points_in_nunataks_gdf = points_yes_no_nunataks_gdf[~points_yes_no_nunataks_gdf.index_right.isna()].drop(
             columns=['index_right'])
         fig, ax = plt.subplots()
-        ax.plot(*gl_geom.exterior.xy, color='blue')
-        gl_geom_nunataks_gdf.plot(ax=ax, color='orange', alpha=0.5)
-        # points_in_glacier_gdf.plot(ax=ax, color='red', alpha=0.5, markersize=1, zorder=2)
-        points_not_in_nunataks_gdf.plot(ax=ax, color='blue', alpha=0.5, markersize=1, zorder=2)
-        points_in_nunataks_gdf.plot(ax=ax, color='red', alpha=0.5, markersize=1, zorder=2)
+        #ax.plot(*gl_geom.exterior.xy, color='blue')
+        gdf_ext.plot(ax=ax, ec='k', fc='none', linewidth=2)
+        gdf_nuns.plot(ax=ax, ec='orange', fc='none')
+        ax.scatter(x=points['lons'], y=points['lats'], c='b', alpha=0.5, s=1)
+        #gl_geom_nunataks_gdf.plot(ax=ax, color='orange', alpha=0.5)
+        #points_in_glacier_gdf.plot(ax=ax, color='red', alpha=0.5, markersize=1, zorder=2)
+        #points_not_in_nunataks_gdf.plot(ax=ax, color='blue', alpha=0.5, markersize=20, zorder=2)
+        #points_in_nunataks_gdf.plot(ax=ax, color='red', alpha=0.5, markersize=1, zorder=2)
         plt.show()
 
     return points
+
+
+def geographic_split_adaptive(glaciers_df, n_jobs, version):
+    """
+    Split glaciers into n_jobs geographic chunks, adapting to aspect ratio.
+    Args:
+        glaciers_df (pd.DataFrame): DataFrame from RGI (imported via OGGM).
+        n_jobs (int): Number of geographic chunks to create.
+    Returns:
+        list of pd.DataFrame: list of lists. Each sublist contains glacier ids in a geographic chunk.
+    """
+
+    if version == '62':
+        name_column_id = 'RGIId'
+        name_column_area = 'Area'
+        name_column_name = 'Name'
+        name_column_lon, name_column_lat = 'CenLon', 'CenLat'
+    elif version == '70G':
+        name_column_id = 'rgi_id'
+        name_column_area = 'area_km2'
+        name_column_name = 'glac_name'
+        name_column_lon, name_column_lat = 'cenlon', 'cenlat'
+
+    if n_jobs == 1:
+        split_ids = glaciers_df[name_column_id].to_list()
+        return [split_ids]
+
+    # Extract geographic bounds
+    lon_min, lon_max = glaciers_df[name_column_lon].min(), glaciers_df[name_column_lon].max()
+    lat_min, lat_max = glaciers_df[name_column_lat].min(), glaciers_df[name_column_lat].max()
+    #print(lon_min, lon_max, lat_min, lat_max)
+
+    # Calculate aspect ratio
+    delta_lon = lon_max - lon_min
+    delta_lat = lat_max - lat_min
+
+    # Calculate the desired aspect ratio
+    aspect_ratio = delta_lon / delta_lat
+
+    # Function to generate all factor pairs of n_jobs
+    def get_factor_pairs(n_jobs):
+        factors = []
+        for i in range(1, int(np.sqrt(n_jobs)) + 1):
+            if n_jobs % i == 0:
+                factors.append((i, n_jobs // i))
+        return factors
+
+    # Function to select the best split pair based on aspect ratio
+    def find_best_split_pair(factors, aspect_ratio):
+        best_pair = None
+        best_ratio_diff = float('inf')
+
+        for (a, b) in factors:
+            # Calculate aspect ratio of the pair
+            pair_aspect_ratio = a / b
+            # Find the difference between the pair's aspect ratio and the desired one
+            ratio_diff = abs(pair_aspect_ratio - aspect_ratio)
+
+            # If this pair is closer to the desired aspect ratio, choose it
+            if ratio_diff < best_ratio_diff:
+                best_pair = (a, b)
+                best_ratio_diff = ratio_diff
+
+        return best_pair
+
+    # Generate factor pairs of n_jobs
+    factors = get_factor_pairs(n_jobs)
+
+    # Find the best split pair that respects the aspect ratio
+    splits_lon, splits_lat = find_best_split_pair(factors, aspect_ratio)
+
+    # Add assertion to verify the split consistency
+    assert splits_lon * splits_lat == n_jobs, f"Splits ({splits_lon}x{splits_lat}) do not equal the number of jobs ({n_jobs})."
+    #print(splits_lon, ' x ', splits_lat)
+
+    # Define grid edges (buffer of 0.5deg)
+    lon_bins = np.linspace(lon_min-0.5, lon_max+0.5, splits_lon + 1)
+    lat_bins = np.linspace(lat_min-0.5, lat_max+0.5, splits_lat + 1)
+
+    # Initialize chunks
+    # Assign glaciers to chunks
+    chunks = []
+    for i in range(splits_lon):
+        for j in range(splits_lat):
+            in_chunk = glaciers_df[
+                (glaciers_df[name_column_lon] >= lon_bins[i]) & (glaciers_df[name_column_lon] < lon_bins[i + 1]) &
+                (glaciers_df[name_column_lat] >= lat_bins[j]) & (glaciers_df[name_column_lat] < lat_bins[j + 1])
+                ]
+
+            # Skip empty chunks
+            if not in_chunk.empty:
+                chunks.append(in_chunk)
+
+            #print(i,j,len(in_chunk))
+
+    # Calculate how many more chunks are needed
+    no_missing = n_jobs - len(chunks)
+
+    while no_missing > 0:
+        #print(no_missing)
+        # Find the largest chunk
+        largest_chunk_idx = np.argmax([len(chunk) for chunk in chunks])
+        largest_chunk = chunks.pop(largest_chunk_idx)  # Remove the largest chunk
+
+        # Split the largest chunk into two parts (based on latitude or longitude)
+        if (largest_chunk[name_column_lon].max() - largest_chunk[name_column_lon].min()) > (
+                largest_chunk[name_column_lat].max() - largest_chunk[name_column_lat].min()):
+            # Split along longitude
+            mid_lon = largest_chunk[name_column_lon].median()
+            left_chunk = largest_chunk[largest_chunk[name_column_lon] <= mid_lon]
+            right_chunk = largest_chunk[largest_chunk[name_column_lon] > mid_lon]
+        else:
+            # Split along latitude
+            mid_lat = largest_chunk[name_column_lat].median()
+            left_chunk = largest_chunk[largest_chunk[name_column_lat] <= mid_lat]
+            right_chunk = largest_chunk[largest_chunk[name_column_lat] > mid_lat]
+
+        # Add the split chunks back to the list
+        chunks.append(left_chunk)
+        chunks.append(right_chunk)
+
+        # Decrease the missing chunks count by 1, since we replaced one chunk with two
+        no_missing -= 1
+
+    assert len(chunks) == n_jobs, "Final number of chunks does not match n_jobs"
+
+    # List of lists. Every sublist contains the ids for multiproc.
+    split_ids = [chunk[name_column_id].tolist() for chunk in chunks]
+
+    # check
+    flattened_ids = [item for sublist in split_ids for item in sublist]
+    assert set(flattened_ids) == set(glaciers_df[name_column_id].values), "Some ids went missing."
+
+    return split_ids
