@@ -65,6 +65,30 @@ def lmax_with_covex_hull(geometry, glacier_epsg):
     # Compute pairwise distances between all points on the convex hull
     dist_matrix = distance_matrix(coords_hull, coords_hull)
     lmax = np.max(dist_matrix)
+
+    ifplot = False
+    if ifplot:
+        # Only for plotting purposes
+        gdf = gpd.GeoDataFrame({
+            'geometry': [gl_geom, convex_hull],
+            'type': ['Glacier geometry', 'Convex Hull']
+        })
+        # Find the indices of the maximum distance
+        max_idx = np.unravel_index(np.argmax(dist_matrix), dist_matrix.shape)
+        point1, point2 = coords_hull[max_idx[0]], coords_hull[max_idx[1]]
+        fig, ax = plt.subplots()
+        gdf.plot(ax=ax, color=['lightgrey', 'none'], edgecolor=['k', 'blue'], linestyle=['-', '--'])
+        ax.plot([point1[0], point2[0]], [point1[1], point2[1]], color='blue', linestyle='-', linewidth=2,
+                label=f'Lmax = {lmax:.2f}')
+        plt.legend(handles=[
+            plt.Line2D([0], [0], color='k', label='Glacier geometry'),
+            plt.Line2D([0], [0], color='blue', linestyle='--', label='Convex Hull'),
+            plt.Line2D([0], [0], color='blue', label=f'Lmax = {lmax:.0f} m')], fontsize=14, loc='upper left')
+        plt.tick_params(labelsize=14)
+        ax.set_xlabel("Eastings [m]", fontsize=16)
+        ax.set_ylabel("Northings [m]", fontsize=16)
+        plt.show()
+
     return lmax
 
 def lmax_imputer(geometry, glacier_epsg):
