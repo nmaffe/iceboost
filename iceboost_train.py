@@ -825,28 +825,6 @@ y_max = max(np.concatenate((y_preds_glacier, y_test_glacier_m, y_test_glacier_f)
 vmin = min(y_preds_glacier)
 vmax = max(y_preds_glacier)
 
-create_tif_file = False
-if create_tif_file:
-    lons = test_glacier['lons'].to_numpy()
-    lats = test_glacier['lats'].to_numpy()
-
-    # Create the grid
-    grid_res = 0.001  # Adjust as needed
-    lat_grid = np.arange(lats.min(), lats.max(), grid_res)
-    lon_grid = np.arange(lons.min(), lons.max(), grid_res)
-    lon_grid, lat_grid = np.meshgrid(lon_grid, lat_grid)
-
-    # Interpolate the z values onto the grid
-    z_grid = griddata((lons, lats), y_preds_glacier, (lon_grid, lat_grid), method='linear')
-
-    data_array = xarray.DataArray(z_grid, coords=[lat_grid[:, 0], lon_grid[0, :]], dims=['lat', 'lon'])
-    data_array = data_array.rio.set_spatial_dims(x_dim='lon', y_dim='lat')
-    data_array = data_array.rio.write_crs("EPSG:4326")
-    data_array.rio.to_raster("ex.tif")
-
-    plt.imshow(z_grid, cmap='turbo')
-    plt.show()
-
 plot_fancy_ML_prediction = True
 if plot_fancy_ML_prediction:
     fig, ax = plt.subplots(figsize=(8,6))
@@ -1027,7 +1005,7 @@ if plot_fancy_ML_Mil_Far_prediction:
     #plt.savefig(f"/home/maffe/Downloads/new_figures_iceboost_paper/fig4_without_sup.png", dpi=100)
     plt.show()
 
-run_shap_single_glacier = True
+run_shap_single_glacier = False
 if run_shap_single_glacier:
     print(f"Running SHAP on single glacier...")
     '''Note: for reproducibility set seed=42 in create_train_test() and also random_state=42 below'''
