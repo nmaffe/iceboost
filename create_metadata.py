@@ -2230,10 +2230,13 @@ def add_dist_from_boder_using_geometries(glathida):
             # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks) and convert to UTM
             cluster_geometry_list = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'].isin(list_cluster_RGIIds), 'geometry'].tolist()
             cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
+            #todo: add a buffer, like this
+            # cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.buffer(0.001).union_all(method='unary'), crs="EPSG:4326")
             cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'),
                                                              crs="EPSG:4326")
             cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
 
+            #todo: probably if-elif can be eliminated. check fetch_metadata
             if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
                 cluster_exterior_ring = [cluster_geometry_no_divides_epsg.item().exterior]
                 cluster_interior_rings = list(cluster_geometry_no_divides_epsg.item().interiors)
