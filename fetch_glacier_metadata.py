@@ -1,51 +1,42 @@
-import os, sys, time
+import os, sys, time, warnings
 from glob import glob
 import argparse
 import numpy as np
+import pandas as pd
+import geopandas as gpd
+import scipy
+import sklearn.neighbors
 import cupy as cp
 import cupyx.scipy.ndimage
-import pandas as pd
-import scipy
-from scipy.interpolate import griddata
-from astropy.convolution import Gaussian2DKernel, convolve, convolve_fft
-import sklearn.neighbors
-import pykdtree.kdtree
-from sklearn.impute import KNNImputer, SimpleImputer
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import xarray, rioxarray, rasterio
 import xrspatial.curvature
 import xrspatial.aspect
 from rioxarray import merge
-import geopandas as gpd
+import networkx
+from astropy.convolution import Gaussian2DKernel, convolve, convolve_fft
+import pykdtree.kdtree
+from sklearn.impute import SimpleImputer
 import oggm
 from oggm import utils
 from shapely.geometry import Point, Polygon, LineString, MultiLineString, box
 from shapely.errors import GEOSException
 from pyproj import Proj, Transformer, Geod
 import utm
-from joblib import Parallel, delayed
-from functools import partial
 
 from create_rgi_mosaic_tanxedem import fetch_dem, create_glacier_tile_dem_mosaic
 from utils_metadata import *
 from imputation_policies import smb_elev_functs, smb_elev_functs_hugo, velocity_median_rgi
 import misc as misc
 
-pd.set_option('display.max_colwidth', None)
-pd.set_option('display.width', None)
 """
-This program generates glacier metadata at some random locations inside the glacier geometry. 
-
-Input: glacier name (RGIId), how many points you want to generate. 
+This program generates glacier metadata inside the glacier geometry. 
+Input: glacier name (RGIId)
 Output: pandas dataframe with features calculated for each generated point. 
 
-Note: the points are generated inside the glacier but outside nunataks (there is a check for this)
-
-Note: Millan and Farinotti products needs to be interpolated. Interpolation close to the borders may result in nans. 
-The interpolation method="nearest" yields much less nans close to borders if compared to linear
-interpolation and therefore is preferred. 
-
+# todo: it may be wise to return also other stuff, e.g. some geometries
+# todo: also, i may decide not to interpolate farinotti and millan ith for speedup    
 """
 
 def populate_glacier_with_metadata(glacier_name,
@@ -56,25 +47,34 @@ def populate_glacier_with_metadata(glacier_name,
                                    coastlines_dataframe = None,
                                    link_rgi6_rg7_dataframe = None,
                                    seed=None,
-                                   verbose=True):
+                                   verbose=True,
+                                   ):
 
 
     print(f"******* FETCHING FEATURES FOR GLACIER {glacier_name} *******") if verbose else None
+
+    # Feature dataframe
+    points_df = pd.DataFrame(columns=['lons', 'lats', 'nunataks'])
+
     tin=time.time()
 
     # unpack config
-    n_points_regression = config.n_points_regression
+    n_points_regression_single = config.n_points_regression_single
+    n_points_regression_cluster = config.n_points_regression_cluster
     k_max_geoms = config.kdtree_dist_max_k_geometries
     graph_max_layer_depth = config.graph_max_layer_depth
 
-    #rgi = int(glacier_name[6:8]) # get rgi from the glacier code
     rgi = int(rgi)
 
     # Get rgi products
     oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
 
-    if version == '62': name_column_id = 'RGIId'
-    elif version == '70G': name_column_id = 'rgi_id'
+    if version == '62':
+        name_column_id = 'RGIId'
+        name_column_name = 'Name'
+    elif version == '70G':
+        name_column_id = 'rgi_id'
+        name_column_name = 'glac_name'
 
     try:
         # Get glacier dataset
@@ -86,7 +86,7 @@ def populate_glacier_with_metadata(glacier_name,
         # print(gl_df.T)
     except Exception as e:
         print(f"Error. {glacier_name} not present in OGGM's RGI v62.")
-        return None
+        return None, None
 
     # center of glacier and glacier epsg
     glacier_centroid = gl_geom_ext.centroid
@@ -94,75 +94,136 @@ def populate_glacier_with_metadata(glacier_name,
     _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(cenLat, cenLon)
     print(f"Glacier {glacier_name} found. Lat: {cenLat}, Lon: {cenLon}") if verbose else None
 
-    llx, lly, urx, ury = gl_geom.bounds # geometry bounds
-
     # Geodataframes of external boundary and all internal nunataks
     gl_geom_nunataks_gdf = gpd.GeoDataFrame(geometry=gl_geom_nunataks_list, crs="EPSG:4326")
     gl_geom_ext_gdf = gpd.GeoDataFrame(geometry=[gl_geom_ext], crs="EPSG:4326")
 
+    # Area in km2, perimeter in m
+    # Note that the area in OGGM equals to area_ice.
+    glacier_area, perimeter_ice = Geod(ellps="WGS84").geometry_area_perimeter(gl_geom)
+    area_ice_and_noince, perimeter_ice_and_noice = Geod(ellps="WGS84").geometry_area_perimeter(gl_geom_ext)
+
+    glacier_area = abs(glacier_area) * 1e-6  # km^2
+    area_ice_and_noince = abs(area_ice_and_noince) * 1e-6  # km^2
+
+    lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg)  # m
+
+    # Calculate area of nunataks in percentage to the total area
+    area_noice = 1 - glacier_area / area_ice_and_noince
+
     tgeometries = time.time() - tin
 
-    # Generate points (no points can be generated inside nunataks)
+    # Calculate cluster
+    t_cluster0 = time.time()
+
+    # Let's decide to run on cluster only on polar regions
+    if config.deploy_mode == 'auto': deploy_mode = 'auto'
+    elif config.deploy_mode == 'single': deploy_mode = 'single'
+    else: raise ValueError(f"Deploy mode not recognized.")
+
+    cluster_data = False
+    if (deploy_mode == 'auto' and rgi in [3,4,5,6,7,9,19]):
+        cluster_data = get_possible_cluster(rgi_graph, glacier_name, glacier_epsg, rgi, oggm_rgi_glaciers, name_column_id)
+
+    if cluster_data is not False:
+        # Case run on cluster
+        cluster_area = (cluster_data['Area'] * cluster_data['Area']).sum() / cluster_data['Area'].sum()
+        cluster_perimeter = (cluster_data['Perimeter'] * cluster_data['Area']).sum() / cluster_data['Area'].sum()
+        cluster_lmax = (cluster_data['lmax'] * cluster_data['Area']).sum() / cluster_data['Area'].sum()
+        list_cluster_RGIIds = cluster_data.index.tolist()
+    else:
+        # Case: run on normal glacier. Setup a cluster with connectivity 3 as usual
+        list_cluster_RGIIds = find_cluster_with_graph(rgi_graph, glacier_name, max_depth=graph_max_layer_depth)
+
+    # deployed_glaciers is the list of glacier IDs on which we are doing model inference. In 'auto' mode,
+    # list_cluster_RGIIds and deployed_glaciers are the same
+    deployed_glaciers = [glacier_name] if cluster_data is False else list_cluster_RGIIds
+
+    # We return the ids we have consumed
+    yield deployed_glaciers
+
+    # list_cluster_RGIIds contains the IDs of the glaciers in the cluster. If we're running as a single glacier,
+    # the cluster has a depth of 3. If we're running on auto, all glaciers in the cluster are contained.
+    no_glaciers_in_cluster = len(list_cluster_RGIIds)
+
+    # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks)
+    cluster_geometry_list = oggm_rgi_glaciers.loc[
+        oggm_rgi_glaciers[name_column_id].isin(list_cluster_RGIIds), 'geometry'].tolist()
+
+    # Combine into a series of all glaciers in the cluster
+    cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
+
+    # Suppress the specific warning about buffering in a geographic CRS
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore",
+                                message="Geometry is in a geographic CRS. Results from 'buffer' are likely incorrect")
+        buffered_geometries = cluster_geometry_4326.buffer(0.0004)
+
+    # remove ice divides
+    cluster_geometry_4326 = gpd.GeoSeries(buffered_geometries.union_all(method='unary'), crs="EPSG:4326")
+
+    # cluster exterior and interior dataframes
+    cluster_ext_gdf = gpd.GeoDataFrame(geometry=[Polygon(cluster_geometry_4326.iloc[0].exterior)], crs="EPSG:4326")
+    cluster_nunataks_gdf = gpd.GeoDataFrame(
+        geometry=[Polygon(interior) for interior in cluster_geometry_4326.iloc[0].interiors], crs="EPSG:4326")
+
+    #fig, ax = plt.subplots()
+    #cluster_geometry_4326.plot(ax=ax, color="k", ec="blue", alpha=0.5)
+    #plt.show()
+
+    # Calculate the area of the cluster in km2 (NOTE that given the buffer, this area is slightly bigger)
+    area_cluster, perimeter_cluster = Geod(ellps="WGS84").geometry_area_perimeter(Polygon(cluster_geometry_4326.iloc[0].exterior))
+    area_cluster = abs(area_cluster) * 1e-6  # km^2
+    print(f"Cluster (4326): {area_cluster:.5f} km2 and {no_glaciers_in_cluster} glaciers created in: {time.time() - t_cluster0:.3f}") if verbose else None
+
+    # Generate points
     tp0 = time.time()
-    points = {'lons': [], 'lats': [], 'nunataks': []}
-    if seed is not None: np.random.seed(seed)
+    if cluster_data is not False:
+        #print(f"Running on cluster: {list_cluster_RGIIds}")
+        print(f"Running on cluster") if verbose else None
+        if config.mode_point_generation == 'random':
+            points = generate_points(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_cluster)
+        elif config.mode_point_generation == 'grid':
+            points = generate_points_on_grid(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, max_points=n_points_regression_cluster)
+        else: raise ValueError("Unsupported mode for data generation.")
+        gl_geom = Polygon(cluster_geometry_4326.iloc[0]) # override
+        gl_geom_ext = Polygon(gl_geom.exterior)         # override
+        gl_geom_nunataks_gdf = cluster_nunataks_gdf     # override
+        gl_geom_ext_gdf = cluster_ext_gdf               # override
+    else:
+        print(f"Running single glacier") if verbose else None
+        if config.mode_point_generation == 'random':
+            points = generate_points(gdf_ext=gl_geom_ext_gdf, gdf_nuns=gl_geom_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_single)
+        elif config.mode_point_generation == 'grid':
+            points = generate_points_on_grid(gdf_ext=gl_geom_ext_gdf, gdf_nuns=gl_geom_nunataks_gdf, max_points=n_points_regression_single)
+        else: raise ValueError("Unsupported mode for data generation.")
 
-    while (len(points['lons']) < n_points_regression):
-        batch_size = min(n_points_regression, n_points_regression - len(points['lons']))  # Adjust batch size as needed
-        r_lons = np.random.uniform(llx, urx, batch_size)
-        r_lats = np.random.uniform(lly, ury, batch_size)
-        #points_batch = list(map(Point, r_lons, r_lats))
-        #points_batch_gdf = gpd.GeoDataFrame(geometry=points_batch, crs="EPSG:4326")
-        points_batch_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(r_lons, r_lats), crs="EPSG:4326")
+    plot_gen_points = False
+    if plot_gen_points:
+        fig, (ax1, ax2) = plt.subplots(1, 2)
+        cluster_geometry_4326.plot(ax=ax1, ec='k', fc='none')
+        cluster_ext_gdf.plot(ax=ax2, ec='b', fc='none')
+        if len(cluster_nunataks_gdf)>0: cluster_nunataks_gdf.plot(ax=ax2, ec='r', fc='none')
+        ax2.scatter(x=points['lons'], y=points['lats'], s=1)
+        plt.show()
 
-        # A bit faster
-        # 1) Select only those points generated inside the external polygon
-        #points_in_glacier_gdf = gpd.sjoin(points_batch_gdf, gl_geom_ext_gdf, how="inner", predicate="within").drop(columns=['index_right'])
-        # 2) Exclude points that are inside any internal polygons
-        #points_in_internal_polygons_gdf = gpd.sjoin(points_in_glacier_gdf, gl_geom_nunataks_gdf, how="left", predicate="within")
-        #points_not_in_nunataks_gdf = points_in_internal_polygons_gdf[points_in_internal_polygons_gdf.index_right.isna()]
+    #fig, ax = plt.subplots()
+    #gl_geom_ext_gdf.plot(ax=ax, ec='blue', fc='none')
+    #if len(gl_geom_nunataks_gdf)>0: gl_geom_nunataks_gdf.plot(ax=ax, ec='red', fc='none')
+    #ax.scatter(x=points['lons'], y=points['lats'], s=1, c='k')
+    #plt.show()
 
-        # A bit slower
-        # 1) First we select only those points generated inside the glacier
-        points_yes_no_ext_gdf = gpd.sjoin(points_batch_gdf, gl_geom_ext_gdf, how="left", predicate="within")
-        points_in_glacier_gdf = points_yes_no_ext_gdf[~points_yes_no_ext_gdf.index_right.isna()].drop(columns=['index_right'])
-        indexes_of_points_inside = points_in_glacier_gdf.index
-        # 2) Then we get rid of all those generated inside nunataks
-        points_yes_no_nunataks_gdf = gpd.sjoin(points_batch_gdf.loc[indexes_of_points_inside], gl_geom_nunataks_gdf, how="left", predicate="within")
-        points_not_in_nunataks_gdf = points_yes_no_nunataks_gdf[points_yes_no_nunataks_gdf.index_right.isna()].drop(columns=['index_right'])
+    tp1 = time.time()
+    tgenpoints = tp1-tp0
+    print(f"We have generated {len(points['lats'])} points in {tgenpoints:.3f}") if verbose else None
 
-        points['lons'].extend(points_not_in_nunataks_gdf['geometry'].x.tolist())
-        points['lats'].extend(points_not_in_nunataks_gdf['geometry'].y.tolist())
-        points['nunataks'].extend([0.0]*len(points_not_in_nunataks_gdf))
-
-
-        plot_gen_points = False
-        if plot_gen_points:
-            points_in_nunataks_gdf = points_yes_no_nunataks_gdf[~points_yes_no_nunataks_gdf.index_right.isna()].drop(
-                columns=['index_right'])
-            fig, ax = plt.subplots()
-            ax.plot(*gl_geom.exterior.xy, color='blue')
-            gl_geom_nunataks_gdf.plot(ax=ax, color='orange', alpha=0.5)
-            #points_in_glacier_gdf.plot(ax=ax, color='red', alpha=0.5, markersize=1, zorder=2)
-            points_not_in_nunataks_gdf.plot(ax=ax, color='blue', alpha=0.5, markersize=1, zorder=2)
-            points_in_nunataks_gdf.plot(ax=ax, color='red', alpha=0.5, markersize=1, zorder=2)
-            plt.show()
-
-    print(f"We have generated {len(points['lats'])} pointsin {time.time()-tp0:.3f}") if verbose else None
-    # Feature dataframe
-    points_df = pd.DataFrame(columns=['lons', 'lats', 'nunataks'])
-    # Fill lats, lons and nunataks
+    # Fill these features
     points_df['lats'] = points['lats']
     points_df['lons'] = points['lons']
     points_df['nunataks'] = points['nunataks']
     if (points_df['nunataks'].sum() != 0):
         print(f"The generation pipeline has produced n. {points_df['nunataks'].sum()} points inside nunataks")
         raise ValueError
-
-    tp1 = time.time()
-    tgenpoints = tp1-tp0
-
-    # Fill these features
     points_df['RGI'] = rgi
     #points_df['Area'] = gl_df['Area'].item()
     #points_df['Zmin'] = gl_df['Zmin'].item() # we use tandemx for this
@@ -173,32 +234,21 @@ def populate_glacier_with_metadata(glacier_name,
     #points_df['Form'] = gl_df['Form'].item() # not used anymore
     #points_df['TermType'] = gl_df['TermType'].item()
     #points_df['Aspect'] = gl_df['Aspect'].item()
+    if cluster_data is not False:
+        points_df['Area']       = cluster_area      # km^2
+        points_df['Perimeter']  = cluster_perimeter # m
+        points_df['lmax']       = cluster_lmax      # m
+        #print(cluster_data['lmax'].max(), cluster_data['lmax'].mean(), cluster_lmax, cluster_data['Area'].max(),
+        #      cluster_data['Area'].mean(), cluster_area, cluster_data['Perimeter'].max(), cluster_data['Perimeter'].mean(), cluster_perimeter)
+    else:
+        points_df['Area']       = glacier_area  # km^2
+        points_df['Perimeter']  = perimeter_ice # m
+        points_df['lmax']       = lmax          # m
+    points_df['Area_icefree']   = area_noice  # unitless
+    points_df['Cluster_area']   = area_cluster # Note that if I run the cluster, bigger that depth=3, outside training space
+    points_df['Cluster_glaciers'] = no_glaciers_in_cluster
 
-    # Area in km2, perimeter in m
-    # Note that the area in OGGM equals to area_ice.
-    glacier_area, perimeter_ice = Geod(ellps="WGS84").geometry_area_perimeter(gl_geom)
-    area_ice_and_noince, perimeter_ice_and_noice = Geod(ellps="WGS84").geometry_area_perimeter(gl_geom_ext)
 
-    glacier_area = abs(glacier_area) * 1e-6                 # km^2
-    area_ice_and_noince = abs(area_ice_and_noince) * 1e-6   # km^2
-
-    # Calculate area of nunataks in percentage to the total area
-    area_noice = 1 - glacier_area / area_ice_and_noince
-
-    points_df['Area'] = glacier_area            # km^2
-    points_df['Perimeter'] = perimeter_ice      # m
-    points_df['Area_icefree'] = area_noice      # unitless
-
-    points_df['lmax'] = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg)
-
-    # Data imputation for lmax (needed for sure for rgi 1 mostly)
-    #if gl_df['Lmax'].item() == -9:
-        ##lmax = lmax_imputer(gl_geom_ext_gdf, glacier_epsg) # slower
-        #lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg) # faster
-        #points_df['Lmax'] = lmax
-
-    # Data imputation for the aspect (found needed for Greenland)
-    #if gl_df['Aspect'].item() == -9: points_df['Aspect'] = 0
 
     # Calculate the adaptive filter size based on the Area value
     sigma_af_min, sigma_af_max = 100.0, 2000.0
@@ -245,6 +295,8 @@ def populate_glacier_with_metadata(glacier_name,
                 inside_millan = True
                 print(f"Found glacier in Millan tile: {file_ith}") if verbose else None
                 break
+
+        bedmachine_used = False
 
         if inside_millan:
             print("Interpolating Millan Antarctica") if verbose else None
@@ -381,7 +433,7 @@ def populate_glacier_with_metadata(glacier_name,
                     focus_ith = tile_ith.squeeze()
                 except Exception as generic_error:
                     print("Impossible to smooth Millan tile with astropy.") if verbose else None
-                    return points_df
+                    return points_df, bedmachine_used
 
 
                 # create xarrays of filtered velocities
@@ -422,7 +474,7 @@ def populate_glacier_with_metadata(glacier_name,
             if points_df['ith_m'].isna().all():
                 print(f"No Millan ith data can be found for rgi {rgi} glacier {glacier_name} at {cenLat} lat {cenLon} lon.") if verbose else None
 
-            return points_df
+            return points_df, bedmachine_used
 
         else:
             print("Interpolating NSIDC velocity and BedMachine Antarctica") if verbose else None
@@ -488,6 +540,7 @@ def populate_glacier_with_metadata(glacier_name,
 
                 # Fill dataframe with NSIDC BedMachine ith
                 points_df['ith_m'] = ith_data
+                bedmachine_used = True
                 print("NSIDC BedMachine ith interpolated.") if verbose else None
 
                 #fig, ax = plt.subplots()
@@ -505,7 +558,7 @@ def populate_glacier_with_metadata(glacier_name,
                 vy_NSIDC_focus = vy_NSIDC.rio.clip_box(minx=minE - eps, miny=minN - eps, maxx=maxE + eps, maxy=maxN + eps)
             except:
                 print('No NSIDC velocity tiles around the points found') if verbose else None
-                return points_df
+                return points_df, bedmachine_used
 
             # Condition 1. Either v is .rio.nodata or it is zero or it is nan
             cond0 = np.all(vx_NSIDC_focus.values == 0)
@@ -624,7 +677,7 @@ def populate_glacier_with_metadata(glacier_name,
             else:
                 print('No NSIDC velocity interpolation possible.') if verbose else None
 
-            return points_df
+            return points_df, bedmachine_used
 
     def fetch_millan_data_Gr(points_df):
         # Note: Millan has no velocity. Velocity needs to be extracted from NSICD.
@@ -750,11 +803,12 @@ def populate_glacier_with_metadata(glacier_name,
 
                 #break # Since interpolation should have only happened for the only right tile no need to evaluate others
 
-
+        bedmachine_used = False
         # Check if Millan ith interpolation is satisfactory. If not, try BedMachine v5
         millan_ith_nan_count_perc = np.isnan(points_df['ith_m']).sum() / len(points_df['ith_m'])
         #print(millan_ith_nan_count_perc)
         if millan_ith_nan_count_perc > .5:
+            bedmachine_used = True
             print(f'Millan ith has too many nans for {glacier_name}. Will try to use BedMachine tiles') if verbose else None
 
             # Interpolate BedMachinev5 ice field
@@ -775,6 +829,9 @@ def populate_glacier_with_metadata(glacier_name,
             tile_ith.rio.write_nodata(np.nan, inplace=True)
 
             tile_ith = tile_ith.squeeze()
+
+            #tile_ith.plot(cmap='turbo')
+            #plt.show()
 
             eastings_ar = xarray.DataArray(eastings)
             northings_ar = xarray.DataArray(northings)
@@ -968,7 +1025,7 @@ def populate_glacier_with_metadata(glacier_name,
         if points_df['ith_m'].isna().all():
             print(f"No Millan ith data can be found for rgi {rgi} glacier {glacier_name} at {cenLat} lat {cenLon} lon.") if verbose else None
 
-        return points_df
+        return points_df, bedmachine_used
 
     def fetch_millan_data(points_df, rgi):
 
@@ -1269,15 +1326,14 @@ def populate_glacier_with_metadata(glacier_name,
         if points_df['ith_m'].isna().all():
             print(f"No Millan ith data can be found for rgi {rgi} glacier {glacier_name} at {cenLat} lat {cenLon} lon.") if verbose else None
 
-        return points_df
-
+        return points_df, False
 
     if rgi == 5:
-        points_df = fetch_millan_data_Gr(points_df)
+        points_df, bedmachine_used = fetch_millan_data_Gr(points_df)
     elif rgi == 19:
-        points_df = fetch_millan_data_An(points_df)
+        points_df, bedmachine_used = fetch_millan_data_An(points_df)
     else:
-        points_df = fetch_millan_data(points_df, rgi)
+        points_df, bedmachine_used = fetch_millan_data(points_df, rgi)
 
     tmillan2 = time.time()
     tmillan = tmillan2-tmillan1
@@ -1509,14 +1565,14 @@ def populate_glacier_with_metadata(glacier_name,
         padded_data = np.pad(focus_utm.values, pad_width, mode='edge')
 
         #focus_filter_50_utm = convolve_fft(focus_utm.values, kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-        focus_filter_50_utm = convolve_fft(padded_data, kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
-        focus_filter_75_utm = convolve_fft(padded_data, kernel75, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
-        focus_filter_100_utm = convolve_fft(padded_data, kernel100, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
-        focus_filter_125_utm = convolve_fft(padded_data, kernel125, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
-        focus_filter_150_utm = convolve_fft(padded_data, kernel150, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
-        focus_filter_300_utm = convolve_fft(padded_data, kernel300, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
-        focus_filter_450_utm = convolve_fft(padded_data, kernel450, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
-        focus_filter_af_utm = convolve_fft(padded_data, kernelaf, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_50_utm = convolve_fft(padded_data, kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan, allow_huge=True)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_75_utm = convolve_fft(padded_data, kernel75, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan, allow_huge=True)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_100_utm = convolve_fft(padded_data, kernel100, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan, allow_huge=True)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_125_utm = convolve_fft(padded_data, kernel125, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan, allow_huge=True)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_150_utm = convolve_fft(padded_data, kernel150, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan, allow_huge=True)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_300_utm = convolve_fft(padded_data, kernel300, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan, allow_huge=True)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_450_utm = convolve_fft(padded_data, kernel450, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan, allow_huge=True)[pad_width:-pad_width, pad_width:-pad_width]
+        focus_filter_af_utm = convolve_fft(padded_data, kernelaf, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan, allow_huge=True)[pad_width:-pad_width, pad_width:-pad_width]
 
         t1_dem_smooth = time.time()
         print(f"Time to smooth dem: {t1_dem_smooth - t0_dem_smooth}") if verbose else None
@@ -1927,42 +1983,53 @@ def populate_glacier_with_metadata(glacier_name,
     tfar1 = time.time()
 
     points_df['ith_f'] = np.nan
-
+    volumes_farinotti_df = pd.DataFrame(index=deployed_glaciers, columns=['vol_far']).rename_axis('ID')
     folder_rgi_farinotti = f"{config.farinotti_icethickness_dir}RGI60-{rgi:02d}/"
-    try: # Import farinotti ice thickness file. Note that it contains zero where ice not present.
-        if version == '62':
-            file_glacier_farinotti = rioxarray.open_rasterio(f'{folder_rgi_farinotti}{glacier_name}_thickness.tif',
-                                                             masked=False)
-        elif version == '70G':
-                rgi_id_6 = link_rgi6_rg7_dataframe.at[glacier_name, 'rgi_id_62']
+
+    for n, id in enumerate(deployed_glaciers):
+
+        try: # Import farinotti ice thickness file. Note that it contains zero where ice not present.
+            if version == '62':
+                file_glacier_farinotti = rioxarray.open_rasterio(f'{folder_rgi_farinotti}{id}_thickness.tif',
+                                                                 masked=False)
+            elif version == '70G':
+                rgi_id_6 = link_rgi6_rg7_dataframe.at[id, 'rgi_id_62']
                 file_glacier_farinotti = rioxarray.open_rasterio(f'{folder_rgi_farinotti}{rgi_id_6}_thickness.tif',
-                                                         masked=False)
+                                                             masked=False)
 
-        file_glacier_farinotti = file_glacier_farinotti.where(file_glacier_farinotti != 0.0) # replace zeros with nans.
-        file_glacier_farinotti.rio.write_nodata(np.nan, inplace=True)
+            res_farinotti = file_glacier_farinotti.rio.resolution()[0]
+            vol_farinotti_id = 1.e-9 * (res_farinotti ** 2) * np.nansum(file_glacier_farinotti.values)
+            volumes_farinotti_df.at[id, 'vol_far'] = vol_farinotti_id
 
-        transformerF = Transformer.from_crs("EPSG:4326", file_glacier_farinotti.rio.crs)
-        lons_crs_f, lats_crs_f = transformerF.transform(points_df['lats'].to_numpy(), points_df['lons'].to_numpy())
+            file_glacier_farinotti = file_glacier_farinotti.where(file_glacier_farinotti != 0.0) # replace zeros with nans.
+            file_glacier_farinotti.rio.write_nodata(np.nan, inplace=True)
 
-        ith_f_data = file_glacier_farinotti.interp(y=xarray.DataArray(lats_crs_f), x=xarray.DataArray(lons_crs_f),
-                                                   method="nearest").data.squeeze()
-        points_df['ith_f'] = ith_f_data
-        print(f"From Farinotti ith interpolation we have generated {np.isnan(ith_f_data).sum()} nans.") if verbose else None
+            transformerF = Transformer.from_crs("EPSG:4326", file_glacier_farinotti.rio.crs)
+            lons_crs_f, lats_crs_f = transformerF.transform(points_df['lats'].to_numpy(), points_df['lons'].to_numpy())
 
-        show_farinotti = False
-        if show_farinotti:
-            fig, (ax1, ax2) = plt.subplots(1,2)
-            s1 = ax1.scatter(x=lons_crs_f, y=lats_crs_f, s=1, c=ith_f_data)
-            s2 = ax1.scatter(x=lons_crs_f[np.isnan(ith_f_data)], y=lats_crs_f[np.isnan(ith_f_data)], s=1, c='magenta')
-            file_glacier_farinotti.plot(ax=ax2, cmap='Blues')
-            cmbar = plt.colorbar(s1)
-            plt.show()
 
-        no_farinotti_data = False
+            ith_f_data = file_glacier_farinotti.interp(y=xarray.DataArray(lats_crs_f), x=xarray.DataArray(lons_crs_f),
+                                                       method="nearest").data.squeeze()
 
-    except:
-        print(f"No Farinotti data can be found for rgi {rgi} glacier {glacier_name} or Farinotti interpolation is problematic.") if verbose else None
-        no_farinotti_data = True
+
+            mask_valid = ~np.isnan(ith_f_data)  # Mask for non-NaN values in ith_f_data
+            points_df.loc[mask_valid, 'ith_f'] = ith_f_data[mask_valid]
+            #print(np.isnan(ith_f_data).sum(), len(ith_f_data))
+
+            #points_df['ith_f'] = ith_f_data
+            #print(f"From Farinotti ith interpolation in {id} we have generated {np.isnan(ith_f_data).sum()} nans.") if verbose else None
+
+            show_farinotti = False
+            if show_farinotti:
+                fig, (ax1, ax2) = plt.subplots(1,2)
+                s1 = ax1.scatter(x=lons_crs_f, y=lats_crs_f, s=1, c=ith_f_data)
+                s2 = ax1.scatter(x=lons_crs_f[np.isnan(ith_f_data)], y=lats_crs_f[np.isnan(ith_f_data)], s=1, c='magenta')
+                file_glacier_farinotti.plot(ax=ax2, cmap='Blues')
+                cmbar = plt.colorbar(s1)
+                plt.show()
+
+        except:
+            print(f"No Farinotti data can be found for rgi {rgi} glacier {id} or Farinotti interpolation is problematic.") if verbose else None
 
     tfar2 = time.time()
     tfar = tfar2-tfar1
@@ -1971,51 +2038,46 @@ def populate_glacier_with_metadata(glacier_name,
     print(f"Calculating the distances using glacier geometries... ") if verbose else None
     tdist0 = time.time()
 
-    # Calculate intersects of all glaciers in the cluster
-    list_cluster_RGIIds = find_cluster_with_graph(rgi_graph, glacier_name, max_depth=graph_max_layer_depth)
-    no_glaciers_in_cluster = len(list_cluster_RGIIds)
-    print(f"Cluster: {no_glaciers_in_cluster} glaciers created in: {time.time()-tdist0:.3f}") if verbose else None
-
-    # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks) and convert to UTM
     tgeoms0 = time.time()
-    cluster_geometry_list = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id].isin(list_cluster_RGIIds), 'geometry'].tolist()
+    # Reproject cluster geometries in utm
+    cluster_geometry_epsg = cluster_geometry_4326.to_crs(epsg=glacier_epsg)
 
-    # Combine into a series of all glaciers in the cluster
-    cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
+    # NEW
+    # Ensure the geometry is a valid MultiPolygon (it will automatically handle both Polygon and MultiPolygon)
+    geometries = list(
+        cluster_geometry_epsg.item().geoms) if cluster_geometry_epsg.item().geom_type == 'MultiPolygon' else [
+        cluster_geometry_epsg.item()]
 
-    # Now remove all ice divides
-    # Note: .union_all(method='coverage') is faster than 'unary' but may lead to incorrect results if polygons overlap
-    #try:
-    #    cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='coverage'), crs="EPSG:4326")
-    #except GEOSException as e:
-    #    print(f"Coverage method failed: {e} Falling back to unary method.") if verbose else None
-    #    cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'), crs="EPSG:4326")
-    cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'), crs="EPSG:4326")
+    # Create exterior and interior rings, regardless of whether it's a single Polygon or a MultiPolygon
+    cluster_exterior_ring = [polygon.exterior for polygon in geometries]  # List of LinearRing objects
+    cluster_interior_rings = [ring for polygon in geometries for ring in
+                              polygon.interiors]  # List of all interior rings
 
-    cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
-    if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
-        cluster_exterior_ring = [cluster_geometry_no_divides_epsg.item().exterior]  # shapely.geometry.polygon.LinearRing
-        cluster_interior_rings = list(cluster_geometry_no_divides_epsg.item().interiors)  # shapely.geometry.polygon.LinearRing
+    #OLD
+    '''
+    if cluster_geometry_epsg.item().geom_type == 'Polygon':
+        cluster_exterior_ring = [cluster_geometry_epsg.item().exterior]  # shapely.geometry.polygon.LinearRing
+        cluster_interior_rings = list(cluster_geometry_epsg.item().interiors)  # shapely.geometry.polygon.LinearRing
         multipolygon = False
-    elif cluster_geometry_no_divides_epsg.item().geom_type == 'MultiPolygon':
-        polygons = list(cluster_geometry_no_divides_epsg.item().geoms)
+    elif cluster_geometry_epsg.item().geom_type == 'MultiPolygon':
+        polygons = list(cluster_geometry_epsg.item().geoms)
         cluster_exterior_ring = [polygon.exterior for polygon in polygons]  # list of shapely.geometry.polygon.LinearRing
         num_multipoly = len(cluster_exterior_ring)
         cluster_interior_ringSequences = [polygon.interiors for polygon in polygons]  # list of shapely.geometry.polygon.InteriorRingSequence
         cluster_interior_rings = [ring for sequence in cluster_interior_ringSequences for ring in sequence]  # list of shapely.geometry.polygon.LinearRing
         multipolygon = True
     else: raise ValueError("Unexpected geometry type. Please check.")
+    '''
 
     # Create a geoseries of all external and internal geometries
     geoseries_geometries_epsg = gpd.GeoSeries(cluster_exterior_ring + cluster_interior_rings, crs=glacier_epsg)
     no_geometries_in_cluster = len(geoseries_geometries_epsg)
-    print(f"Cluster: {no_geometries_in_cluster} geometries created in: {time.time()-tgeoms0:.3f}") if verbose else None
 
-    # Calculate the area of the cluster in km2
-    cluster_exterior_ring_gpd = gpd.GeoSeries([cluster_exterior_ring[0]], crs=glacier_epsg).to_crs("EPSG:4326")
-    area_cluster, perimeter_cluster = Geod(ellps="WGS84").geometry_area_perimeter(cluster_exterior_ring_gpd.iloc[0])
-    area_cluster = abs(area_cluster) * 1e-6 # km^2
-    #print(glacier_area, area_cluster, no_geometries_in_cluster)
+    #fig, (ax1, ax2) = plt.subplots(1,2)
+    #cluster_geometry_epsg.geometry.exterior.plot(ax=ax1, ec='k', fc='none')
+    #geoseries_geometries_epsg.plot(ax=ax2, ec='k', fc='none')
+    #plt.show()
+    print(f"Cluster (UTM): {no_geometries_in_cluster} geometries created in: {time.time()-tgeoms0:.3f}") if verbose else None
 
     #fig, ax = plt.subplots(figsize=(8, 7))
     #ax.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='r')  # first entry is outside border
@@ -2034,7 +2096,7 @@ def populate_glacier_with_metadata(glacier_name,
 
         # Extract all coordinates from the GeoSeries geometries
         # For some reason for version 70G there is an extra dimension.
-        # In fact I find that cluster_geometry_no_divides_epsg.item().has_z >> True
+        # In fact I find that cluster_geometry_epsg.item().has_z >> True
         if version == '62':
             geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
         elif version == '70G':
@@ -2099,6 +2161,7 @@ def populate_glacier_with_metadata(glacier_name,
     # Method 3: vectorized version with CPU (exact method but slow)
     run_distances_with_geopandas_multicpu = False
     if run_distances_with_geopandas_multicpu:
+        from joblib import Parallel, delayed
         def calc_min_distance_to_multi_line(point, multi_line):
             min_dist = point.distance(multi_line)
             return min_dist
@@ -2176,7 +2239,7 @@ def populate_glacier_with_metadata(glacier_name,
 
                     # Plot cluster ice divides removed
                     if multipolygon:
-                        polygons = list(cluster_geometry_no_divides_4326.item().geoms)
+                        polygons = list(cluster_geometry_4326.item().geoms)
                         cluster_exterior_ring = [polygon.exterior for polygon in polygons]  # list of shapely.geometry.polygon.LinearRing
                         cluster_interior_ringSequences = [polygon.interiors for polygon in polygons]  # list of shapely.geometry.polygon.InteriorRingSequence
                         cluster_interior_rings = [ring for sequence in cluster_interior_ringSequences for ring in sequence]  # list of shapely.geometry.polygon.LinearRing
@@ -2186,8 +2249,8 @@ def populate_glacier_with_metadata(glacier_name,
                             ax1.plot(*interior.xy, lw=1, c='blue', zorder=3)
 
                     else:
-                        ax1.plot(*cluster_geometry_no_divides_4326.item().exterior.xy, lw=1, c='red', zorder=3)
-                        for interior in cluster_geometry_no_divides_4326.item().interiors:
+                        ax1.plot(*cluster_geometry_4326.item().exterior.xy, lw=1, c='red', zorder=3)
+                        for interior in cluster_geometry_4326.item().interiors:
                             ax1.plot(*interior.xy, lw=1, c='blue', zorder=3)
 
                 if nunatak: ax1.scatter(lon, lat, s=50, lw=2, c='b')
@@ -2214,8 +2277,6 @@ def populate_glacier_with_metadata(glacier_name,
                 plt.show()
 
     points_df['dist_from_border_km_geom'] = min_distances
-    points_df['Cluster_area'] = area_cluster
-    points_df['Cluster_glaciers'] = no_glaciers_in_cluster
     points_df['Cluster_geometries'] = no_geometries_in_cluster
     tdist1 = time.time()
     tdist = tdist1 - tdist0
@@ -2226,6 +2287,7 @@ def populate_glacier_with_metadata(glacier_name,
     tdistocean0 = time.time()
 
     buffer = 1
+    llx, lly, urx, ury = gl_geom.bounds  # geometry bounds
     box_geoms = coastlines_dataframe.cx[llx-buffer:urx+buffer,lly-buffer:ury+buffer]
 
     #fig, ax = plt.subplots()
@@ -2324,7 +2386,7 @@ def populate_glacier_with_metadata(glacier_name,
                                c='magenta', zorder=1)
 
         # farinotti
-        if no_farinotti_data is False:
+        if points_df['ith_f'].isna().all() is False:
             im4 = file_glacier_farinotti.plot(ax=ax4, cmap='inferno', vmin=np.nanmin(file_glacier_farinotti),
                                               vmax=np.nanmax(file_glacier_farinotti))
             s4 = ax4.scatter(x=lons_crs_f, y=lats_crs_f, s=50, c=ith_f_data, ec=(1, 0, 0, 1), cmap='inferno',
@@ -2487,7 +2549,32 @@ def populate_glacier_with_metadata(glacier_name,
         print(f"Distances ocean: {tdistocean:.2f}")
         print(f"Imputation: {timp:.2f}")
         print(f"*******TOTAL FETCHING FEATURES in {tend - tin:.1f} sec *******")
-    return points_df
+
+    # Let's create a dataframe in which we store some information for each glacier we have processed.
+    # The ID is the glacier name.
+    # Note that the order of the index (deployed_glaciers) is random.
+
+    # Extract the names in the same order as deployed_glaciers
+    filtered_df = oggm_rgi_glaciers.set_index(name_column_id).reindex(deployed_glaciers)
+    popular_names = filtered_df[name_column_name].to_list()
+
+
+    if cluster_data is False:
+        info_df = pd.DataFrame({
+            'Area': points_df['Area'].mean(),
+            'Name': popular_names,
+            'bedmachine': bedmachine_used,
+            'vol_far': volumes_farinotti_df['vol_far']}, index=deployed_glaciers).rename_axis('ID')
+    else:
+        info_df = pd.DataFrame({
+            'Area': cluster_data['Area'],
+            'Name': popular_names,
+            'bedmachine': bedmachine_used,
+            'vol_far': volumes_farinotti_df['vol_far']}, index=deployed_glaciers).rename_axis('ID')
+
+    #print(info_df)
+
+    yield info_df, points_df
 
 
 if __name__ == "__main__":
@@ -2498,17 +2585,18 @@ if __name__ == "__main__":
 
     config = misc.get_config(args.config)  # import from config.yaml
 
-    glacier_name = 'RGI60-19.01285'  # 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
+    glacier_name = 'RGI60-05.10315'  # 'RGI60-11.01450'# 'RGI60-19.01882' RGI60-02.05515
     # ultra weird: RGI60-02.03411 millan has ith but no ice velocity
     # 'RGI60-05.10315' #RGI60-09.00909 RGI60-05.10315 RGI60-05.10315
     # 'RGI60-19.01285' bad slope
+    # RGI60-07.01394 RGI60-07.00027 RGI60-05.13501
 
     test_glacier_rgi, version = get_version_and_rgi_from_id(glacier_name)
     rgi_products = get_rgi_products(test_glacier_rgi, version=version)
     coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
     link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
 
-    generated_points_dataframe = populate_glacier_with_metadata(glacier_name=glacier_name,
+    data_generator = populate_glacier_with_metadata(glacier_name=glacier_name,
                                                   config=config,
                                                   rgi_products=rgi_products,
                                                   rgi=test_glacier_rgi,
@@ -2516,5 +2604,12 @@ if __name__ == "__main__":
                                                   coastlines_dataframe=coastline_dataframe,
                                                   link_rgi6_rg7_dataframe=link_ids_rgi6_rgi7,
                                                   seed=42,
-                                                  verbose=True)
+                                                  verbose=True,
+                                                  )
+
+    deployed_ids = data_generator.send(None)
+
+    info, data = data_generator.send(None)
+    print(deployed_ids)
+
 
