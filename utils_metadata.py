@@ -154,6 +154,15 @@ def get_cmap(name):
         colors = ['#808080', '#A0D8E6', '#3F00FF', '#800080', '#FFA500']  # Grey, light blue, blue, purple, orange
         cm = LinearSegmentedColormap.from_list(name, colors)
 
+    elif name == 'white_to_brown':
+        colors = [(1, 1, 1), '#8B4513']
+        cm = LinearSegmentedColormap.from_list(name, colors)
+
+    elif name == 'white_to_orange':
+        colors = [(1, 1, 1), '#f47200']
+        cm = LinearSegmentedColormap.from_list(name, colors)
+
+
     return cm
 
 
