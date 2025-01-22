@@ -343,16 +343,23 @@ def create_PIL_image(array, png_resolution=None):
     image_resized = image.resize((png_resolution, png_resolution), Image.Resampling.LANCZOS)
     return image_resized
 
-def get_rgi_products(rgi, version):
+def get_rgi_products(rgi, version, gdf_shp=None, gdf_intersects_shp=None):
 
     if version not in ('62', '70G'):
         raise ValueError("Accepted RGI versions are 62 or 70G. Exit.")
 
     if not isinstance(rgi, str): rgi = f"{rgi:02d}"
 
-    # get rgi region and intersect shp files
-    FILE_RGI_SHP = utils.get_rgi_region_file(rgi, version=version)
-    FILE_RGI_INTERSECTS_SHP = utils.get_rgi_intersects_region_file(rgi, version=version)
+    # If shp is provided as input
+    if gdf_shp is not None:
+        FILE_RGI_SHP = gdf_shp
+        FILE_RGI_INTERSECTS_SHP = gdf_intersects_shp
+
+    # run rgi shp
+    else:
+        # get rgi region and intersect shp files
+        FILE_RGI_SHP = utils.get_rgi_region_file(rgi, version=version)
+        FILE_RGI_INTERSECTS_SHP = utils.get_rgi_intersects_region_file(rgi, version=version)
 
     # get rgi dataset of glaciers and glaciers intersects
     rgi_glaciers = gpd.read_file(FILE_RGI_SHP, engine='pyogrio')
@@ -372,7 +379,7 @@ def get_rgi_products(rgi, version):
     mbdf = mbdf.loc[mbdf['period'] == '2000-01-01_2020-01-01']
     mbdf_rgi = mbdf.loc[mbdf['reg'] == int(rgi)]
 
-    rgi_products = (rgi_glaciers, rgi_intersects, rgi_graph, mbdf_rgi)
+    rgi_products = (rgi_glaciers, rgi_graph, mbdf_rgi)
 
     return rgi_products
 
