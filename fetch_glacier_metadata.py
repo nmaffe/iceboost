@@ -67,7 +67,7 @@ def populate_glacier_with_metadata(glacier_name,
     rgi = int(rgi)
 
     # Get rgi products
-    oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
+    oggm_rgi_glaciers, rgi_graph, mbdf_rgi = rgi_products
 
     if version == '62':
         name_column_id = 'RGIId'
