@@ -94,19 +94,27 @@ iceboost_xgb, iceboost_cat = load_models(config)
 # *********************************************
 # Model deploy
 # *********************************************
+#all_glacier_ids = ['AntPen_0', 'AntPen_1', 'AntPen_2', 'AntPen_3', 'AntPen_4', 'AntPen_5', 'AntPen_6',
+#                   'AntPen_7', 'AntPen_8', 'AntPen_9', 'AntPen_10', 'AntPen_11', 'AntPen_12', 'AntPen_13',
+#                   'AntPen_14', 'AntPen_15', 'AntPen_16', 'AntPen_17', 'AntPen_18', 'AntPen_19',
+#                   'AntPen_20', 'AntPen_21', 'AntPen_22']
 run_deploy_from_csv_list = True
 if run_deploy_from_csv_list:
     for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
-        glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-11.01450', rgi=4, version='70G', area=0, seed=None)
-        #print(n, glacier_name_for_generation)
+        #glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-11.01450', rgi=4, version='70G', area=0, seed=None)
+        glacier_name_for_generation = get_random_glacier_rgiid(name='AntPen_19', rgi=4, version='70G', area=0, seed=None)
+        print(n, glacier_name_for_generation)
 
         #if f"{glacier_name_for_generation}.png" in os.listdir(f"{config.model_output_results_dir}"):
         #    print(f"{glacier_name_for_generation} already in there.")
         #    continue
 
-        test_glacier_rgi, version = get_version_and_rgi_from_id(glacier_name_for_generation)
-        rgi_products = get_rgi_products(test_glacier_rgi, version=version)
+        #test_glacier_rgi, version = get_version_and_rgi_from_id(glacier_name_for_generation)
+        test_glacier_rgi, version = '19', '62'
+        gdf_shp = '/media/maffe/nvme/Antarctic_peninsula_geometries/final_product/antarctic_peninsula.shp'
+        gdf_intersects_shp = '/media/maffe/nvme/Antarctic_peninsula_geometries/final_product/antarctic_peninsula_intersects.shp'
+        rgi_products = get_rgi_products(test_glacier_rgi, version=version, gdf_shp=gdf_shp, gdf_intersects_shp=gdf_intersects_shp)
         coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
         link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
 
@@ -133,7 +141,8 @@ if run_deploy_from_csv_list:
         h_egm2008 = calc_geoid_heights(lons=lons, lats=lats, h_wgs84=h_wgs84)
 
         # Begin to extract all necessary things to plot the result
-        oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
+        oggm_rgi_glaciers, rgi_graph, mbdf_rgi = rgi_products
+        #oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
         if version == '62': name_column_id = 'RGIId'
         elif version == '70G': name_column_id = 'rgi_id'
 
@@ -172,15 +181,6 @@ if run_deploy_from_csv_list:
         # ensemble
         y_preds_glacier = 0.5 * (y_preds_glacier_xgb + y_preds_glacier_cat)
 
-        #fig, (ax1,ax2,ax3) = plt.subplots(1,3)
-        #s1 = ax1.scatter(x=data['lons'], y=data['lats'], c=y_preds_glacier, s=1, vmin=y_preds_glacier.min(), vmax=y_preds_glacier.max(),cmap='turbo')
-        #s2 = ax2.scatter(x=data['lons'], y=data['lats'], c=y_preds_glacier_xgb, s=1, vmin=y_preds_glacier.min(), vmax=y_preds_glacier.max(), cmap='turbo')
-        #s3 = ax3.scatter(x=data['lons'], y=data['lats'], c=y_preds_glacier_cat, s=1, vmin=y_preds_glacier.min(), vmax=y_preds_glacier.max(), cmap='turbo')
-        #cb1 = plt.colorbar(s1)
-        #cb2 = plt.colorbar(s2)
-        #cb3 = plt.colorbar(s3)
-        #plt.show()
-
         # Do you want to see the features ?
         #plot_feature_scatter(config, data)
 
@@ -200,6 +200,15 @@ if run_deploy_from_csv_list:
 
         vmin = min(y_preds_glacier)
         vmax = max(y_preds_glacier)
+
+        #fig, (ax1,ax2,ax3) = plt.subplots(1,3)
+        #s1 = ax1.scatter(x=data['lons'], y=data['lats'], c=y_preds_glacier, s=1, vmin=vmin, vmax=vmax,cmap='turbo')
+        #s2 = ax2.scatter(x=data['lons'], y=data['lats'], c=y_preds_glacier_xgb, s=1, vmin=vmin, vmax=vmax, cmap='turbo')
+        #s3 = ax3.scatter(x=data['lons'], y=data['lats'], c=y_preds_glacier_cat, s=1, vmin=vmin, vmax=vmax, cmap='turbo')
+        #cb1 = plt.colorbar(s1)
+        #cb2 = plt.colorbar(s2)
+        #cb3 = plt.colorbar(s3)
+        #plt.show()
 
         plot_for_gif = False
         if plot_for_gif:
@@ -255,7 +264,7 @@ if run_deploy_from_csv_list:
             plt.tight_layout()
             plt.show()
 
-        plot_fancy_ML_prediction = True
+        plot_fancy_ML_prediction = False
         if plot_fancy_ML_prediction:
 
             resolution = 1. / 3600
@@ -349,7 +358,7 @@ if run_deploy_from_csv_list:
             #            transparent=False)
             plt.show()
 
-        plot_fancy_ML_Mil_Far_prediction = False
+        plot_fancy_ML_Mil_Far_prediction = True
         if plot_fancy_ML_Mil_Far_prediction:
             fig = plt.figure(figsize=(15, 6))
             #fig = plt.figure(figsize=(10, 6))
@@ -439,6 +448,8 @@ if run_deploy_from_csv_list:
             ax3.axis('off')
 
             plt.tight_layout()
+            #plt.savefig(f"/home/maffe/Downloads/peninsula/{glacier_name_for_generation}.png", dpi=100)
+            #plt.close()
 
             if config.deploy_save_figs:
                 from PIL import Image
@@ -899,11 +910,10 @@ if run_rgi_simulation_YN:
 
     print(f"Begin regional simulation for region {rgi}, version {version}")
 
-    rgi_products = get_rgi_products(rgi, version=version)
+    oggm_rgi_glaciers, rgi_graph, mbdf_rgi = get_rgi_products(rgi, version=version)
     coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
     link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
 
-    oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
     if version == '62':
         name_column_id = 'RGIId'
         name_column_area = 'Area'
