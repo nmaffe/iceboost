@@ -147,7 +147,7 @@ def create_glacier_tile_dem_mosaic(minx, miny, maxx, maxy, rgi, path_tandemx):
             minx=minx,
             miny=miny,
             maxx=maxx,
-            maxy=maxy)
+            maxy=maxy).squeeze()
     except:
         raise ValueError(f"Problems creation of clipping the focus around the glacier tiles")
 
