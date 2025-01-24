@@ -767,7 +767,7 @@ bedrock_elevations_Far = data['elevation'] - y_test_glacier_f
 # Begin to extract all necessary things to plot the result
 #oggm_rgi_shp = glob(f"{config.oggm_dir}rgi/RGIV62/{test_glacier_rgi}*/{test_glacier_rgi}*.shp")[0]
 #oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
-oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, mbdf_rgi = rgi_products
+oggm_rgi_glaciers, rgi_graph, mbdf_rgi = rgi_products
 if version == '62': name_column_id = 'RGIId'
 elif version == '70G': name_column_id = 'rgi_id'
 #glacier_geometry = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId']==glacier_name_for_generation]['geometry'].item()
