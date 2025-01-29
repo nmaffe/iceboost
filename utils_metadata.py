@@ -345,7 +345,7 @@ def create_PIL_image(array, png_resolution=None):
 
 def get_rgi_products(region=None, version=None, input_glacier_shp_file=None, input_glacier_intersects_shp_file=None):
 
-    if region is None: raise ValueError("You need to specify the region number. Exit.")
+    if region is None: raise ValueError("You need to specify the region number as string. Exit.")
 
     if version not in ('62', '70G'):
         raise ValueError("Accepted RGI versions are 62 or 70G. Exit.")
