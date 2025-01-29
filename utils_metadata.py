@@ -343,29 +343,31 @@ def create_PIL_image(array, png_resolution=None):
     image_resized = image.resize((png_resolution, png_resolution), Image.Resampling.LANCZOS)
     return image_resized
 
-def get_rgi_products(rgi, version, gdf_shp=None, gdf_intersects_shp=None):
+def get_rgi_products(region=None, version=None, input_glacier_shp_file=None, input_glacier_intersects_shp_file=None):
+
+    if region is None: raise ValueError("You need to specify the region number. Exit.")
 
     if version not in ('62', '70G'):
         raise ValueError("Accepted RGI versions are 62 or 70G. Exit.")
 
-    if not isinstance(rgi, str): rgi = f"{rgi:02d}"
+    if not isinstance(region, str): region = f"{region:02d}"
 
-    # If shp is provided as input
-    if gdf_shp is not None:
-        FILE_RGI_SHP = gdf_shp
-        FILE_RGI_INTERSECTS_SHP = gdf_intersects_shp
+    # if shp is provided as input by user
+    if input_glacier_shp_file is not None:
+        FILE_SHP = input_glacier_shp_file
+        FILE_INTERSECTS_SHP = input_glacier_intersects_shp_file
 
-    # run rgi shp
+    # run randolph glacier inventory shp
     else:
         # get rgi region and intersect shp files
-        FILE_RGI_SHP = utils.get_rgi_region_file(rgi, version=version)
-        FILE_RGI_INTERSECTS_SHP = utils.get_rgi_intersects_region_file(rgi, version=version)
+        FILE_SHP = utils.get_rgi_region_file(region=region, version=version)
+        FILE_INTERSECTS_SHP = utils.get_rgi_intersects_region_file(region=region, version=version)
 
-    # get rgi dataset of glaciers and glaciers intersects
-    rgi_glaciers = gpd.read_file(FILE_RGI_SHP, engine='pyogrio')
-    rgi_intersects = gpd.read_file(FILE_RGI_INTERSECTS_SHP, engine='pyogrio')
+    # get dataset of glaciers and glaciers intersects
+    rgi_glaciers = gpd.read_file(FILE_SHP, engine='pyogrio')
+    rgi_intersects = gpd.read_file(FILE_INTERSECTS_SHP, engine='pyogrio')
 
-    # Create graph of connectivity needed for distance calculations
+    # create graph of connectivity needed for distance calculations
     rgi_graph = networkx.Graph()
     if version == '62':
         edges = rgi_intersects[['RGIId_1', 'RGIId_2']].values
@@ -377,7 +379,7 @@ def get_rgi_products(rgi, version, gdf_shp=None, gdf_intersects_shp=None):
     # mass balance rgi dataframe
     mbdf = utils.get_geodetic_mb_dataframe()
     mbdf = mbdf.loc[mbdf['period'] == '2000-01-01_2020-01-01']
-    mbdf_rgi = mbdf.loc[mbdf['reg'] == int(rgi)]
+    mbdf_rgi = mbdf.loc[mbdf['reg'] == int(region)]
 
     rgi_products = (rgi_glaciers, rgi_graph, mbdf_rgi)
 

@@ -94,10 +94,10 @@ iceboost_xgb, iceboost_cat = load_models(config)
 # *********************************************
 # Model deploy
 # *********************************************
-#all_glacier_ids = ['AntPen_0', 'AntPen_1', 'AntPen_2', 'AntPen_3', 'AntPen_4', 'AntPen_5', 'AntPen_6',
-#                   'AntPen_7', 'AntPen_8', 'AntPen_9', 'AntPen_10', 'AntPen_11', 'AntPen_12', 'AntPen_13',
-#                   'AntPen_14', 'AntPen_15', 'AntPen_16', 'AntPen_17', 'AntPen_18', 'AntPen_19',
-#                   'AntPen_20', 'AntPen_21', 'AntPen_22']
+all_glacier_ids = ['AntPen_0', 'AntPen_1', 'AntPen_2', 'AntPen_3', 'AntPen_4', 'AntPen_5', 'AntPen_6',
+                   'AntPen_7', 'AntPen_8', 'AntPen_9', 'AntPen_10', 'AntPen_11', 'AntPen_12', 'AntPen_13',
+                   'AntPen_14', 'AntPen_15', 'AntPen_16', 'AntPen_17', 'AntPen_18', 'AntPen_19',
+                   'AntPen_20', 'AntPen_21', 'AntPen_22']
 run_deploy_from_csv_list = True
 if run_deploy_from_csv_list:
     for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
@@ -112,9 +112,12 @@ if run_deploy_from_csv_list:
 
         #test_glacier_rgi, version = get_version_and_rgi_from_id(glacier_name_for_generation)
         test_glacier_rgi, version = '19', '62'
-        gdf_shp = '/media/maffe/nvme/Antarctic_peninsula_geometries/final_product/antarctic_peninsula.shp'
-        gdf_intersects_shp = '/media/maffe/nvme/Antarctic_peninsula_geometries/final_product/antarctic_peninsula_intersects.shp'
-        rgi_products = get_rgi_products(test_glacier_rgi, version=version, gdf_shp=gdf_shp, gdf_intersects_shp=gdf_intersects_shp)
+        input_shp = '/media/maffe/nvme/Antarctic_peninsula_geometries/final_product/antarctic_peninsula.shp'
+        input_intersects_shp = '/media/maffe/nvme/Antarctic_peninsula_geometries/final_product/antarctic_peninsula_intersects.shp'
+
+        rgi_products = get_rgi_products(region=test_glacier_rgi, version=version,
+                                        input_glacier_shp_file=input_shp,
+                                        input_glacier_intersects_shp_file=input_intersects_shp)
         coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
         link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
 
@@ -910,7 +913,9 @@ if run_rgi_simulation_YN:
 
     print(f"Begin regional simulation for region {rgi}, version {version}")
 
-    oggm_rgi_glaciers, rgi_graph, mbdf_rgi = get_rgi_products(rgi, version=version)
+    oggm_rgi_glaciers, rgi_graph, mbdf_rgi = get_rgi_products(region=rgi, version=version,
+                                                              input_glacier_shp_file=None,
+                                                              input_glacier_intersects_shp_file=None)
     coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
     link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
 
