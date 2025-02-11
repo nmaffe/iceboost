@@ -43,6 +43,7 @@ def populate_glacier_with_metadata(glacier_name,
                                    config = None,
                                    rgi_products=None,
                                    rgi=None,
+                                   mass_balance_df=None,
                                    version=None,
                                    coastlines_dataframe = None,
                                    link_rgi6_rg7_dataframe = None,
@@ -67,7 +68,7 @@ def populate_glacier_with_metadata(glacier_name,
     rgi = int(rgi)
 
     # Get rgi products
-    oggm_rgi_glaciers, rgi_graph, mbdf_rgi = rgi_products
+    oggm_rgi_glaciers, rgi_graph = rgi_products
 
     if version == '62':
         name_column_id = 'RGIId'
@@ -1718,12 +1719,12 @@ def populate_glacier_with_metadata(glacier_name,
     # Hugonnet mass balance
     try:
         if version == '62':
-            glacier_dmdtda = mbdf_rgi.at[glacier_name, 'dmdtda']
+            glacier_dmdtda = mass_balance_df.at[glacier_name, 'dmdtda']
         elif version == '70G':
             rgi_id_6 = link_rgi6_rg7_dataframe.at[glacier_name, 'rgi_id_62']
-            glacier_dmdtda = mbdf_rgi.at[rgi_id_6, 'dmdtda']
+            glacier_dmdtda = mass_balance_df.at[rgi_id_6, 'dmdtda']
     except: # impute the mean
-        glacier_dmdtda = mbdf_rgi['dmdtda'].median()
+        glacier_dmdtda = mass_balance_df['dmdtda'].median()
     print(f'Hugonnet mb: {glacier_dmdtda} m w.e/yr') if verbose else None
 
 
@@ -2095,13 +2096,18 @@ def populate_glacier_with_metadata(glacier_name,
         points_coords_array = np.column_stack((eastings, northings)) #(10000,2)
 
         # Extract all coordinates from the GeoSeries geometries
-        # For some reason for version 70G there is an extra dimension.
-        # In fact I find that cluster_geometry_epsg.item().has_z >> True
-        if version == '62':
-            geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
-        elif version == '70G':
+        # For some reason for version 70G there is an extra dimension, z.
+        # In fact I find that cluster_geometry_epsg.item().has_z >> True.
+        if geoseries_geometries_epsg.has_z.any():
             # Remove the third dimension by stripping out the z-values.
             geoms_coords_array = np.concatenate([np.array(geom.xy).T for geom in geoseries_geometries_epsg.geometry])
+        else:
+            geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
+        #if version == '62':
+        #    geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
+        #elif version == '70G':
+        #    # Remove the third dimension by stripping out the z-values.
+        #    geoms_coords_array = np.concatenate([np.array(geom.xy).T for geom in geoseries_geometries_epsg.geometry])
 
         # it appears that when no. geometries is low pykdtree_kdtree is faster, else sklearn KDTree is faster.
         if no_geometries_in_cluster > 2000:
