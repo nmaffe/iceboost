@@ -34,7 +34,7 @@ GLATHIDA_FILE = "glathida40.csv"
 POLAR_FOLDER = "/media/maffe/nvme/polar_ice_thickness_data/"
 POLAR_FILE = "polar_ice_thick_train_iceboost.parquet"
 
-# Save options
+# save options
 OUT_SAVE_FOLDER = "/media/maffe/nvme/iceboost_train_dataset"
 today = datetime.today().strftime('%Y%m%d')
 filename_out = f"iceboost_train_{today}_hmineq{args.hmin}_tmin{args.tmin}_{args.method_grid}_grid_{args.nbins_grid_latlon}.csv"
