@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 """
 This program imports the generated metadata dataset from create_metadata.py and:
@@ -20,62 +21,80 @@ The processed and gridded dataframe is finally saved.
 """
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--input_metadata_folder', type=str,
-                    default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/",
-                    help="Input metadata folder to be gridded")
-parser.add_argument('--input_metadata_file', type=str,
-                    default="metadata38.csv", help="Input metadata file to be gridded")
-parser.add_argument('--input_icebridge_file', type=str,
-                    default="/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet")
 parser.add_argument('--tmin', type=int, default=20050000, help="Keep only measurements after this year.")
 parser.add_argument('--hmin', type=float, default=1.0, help="Keep only measurements with thickness greater than this.")
 parser.add_argument('--method_grid', type=str, default='mean', help="Supported options: mean, median")
 parser.add_argument('--nbins_grid_latlon', type=int, default=100, help="How many bins in the lat/lon directions")
 parser.add_argument('--save', type=int, default=0, help="Save final dataset or not.")
-
 args = parser.parse_args()
 
+# Input datasets
+GLATHIDA_FOLDER = "/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/"
+GLATHIDA_FILE = "glathida40.csv"
+POLAR_FOLDER = "/media/maffe/nvme/polar_ice_thickness_data/"
+POLAR_FILE = "polar_ice_thick_train_iceboost.parquet"
+
+# Save options
+OUT_SAVE_FOLDER = "/media/maffe/nvme/iceboost_train_dataset"
+today = datetime.today().strftime('%Y%m%d')
+filename_out = f"iceboost_train_{today}_hmineq{args.hmin}_tmin{args.tmin}_{args.method_grid}_grid_{args.nbins_grid_latlon}.csv"
+print(f"Training dataset will be saved as {filename_out}")
+print("*"*100)
+
 """ Import ungridded dataset """
-glathida = pd.read_csv(f"{args.input_metadata_folder}{args.input_metadata_file}", low_memory=False)
+glathida = pd.read_csv(f"{GLATHIDA_FOLDER}{GLATHIDA_FILE}", low_memory=False)
 glathida['THICKNESS'] = glathida['THICKNESS'].astype(float)
 
 # This glacier has a factor 10 too much.
 glathida.loc[glathida['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
+cond = ((glathida['SURVEY_DATE'] > args.tmin) & (glathida['DATA_FLAG'].isna()) & (glathida['THICKNESS']>=args.hmin))
+glathida = glathida[cond]
 
+# todo: check if glathida contains junk values for glacier RGI60-19.00422 (very high thickness seems).
+#glathida_junk = glathida.loc[glathida['RGIId'] == 'RGI60-19.00422']
+#print(glathida_junk['THICKNESS'].describe())
 unique_rgiid_glathida = glathida['RGIId'].unique()
 
-"""Import IceBridge and calculate the extra glaciers to add"""
-icebridge = pd.read_parquet(f"{args.input_icebridge_file}")
-icebridge_extra = icebridge[~icebridge['RGIId'].isin(unique_rgiid_glathida)]
+"""Import polar and calculate the extra glaciers to add"""
+""" Note that this is a very important policy. I am deciding to only consider those ids that are not 
+present in GlaThiDa. Another option would be to contemplate all measurements in both datasets. """
+polar = pd.read_parquet(f"{POLAR_FOLDER}{POLAR_FILE}")
+polar_extra = polar[~polar['RGIId'].isin(unique_rgiid_glathida)]
+cond = ((polar_extra['THICKNESS']>=args.hmin))
+polar_extra = polar_extra[cond]
+unique_rgiid_polar_extra = polar_extra['RGIId'].unique()
 
 # Concatenate glathida with icebridge
-glathida = pd.concat([glathida, icebridge_extra], axis=0, ignore_index=True)
-
-""" A. Work on the dataset """
-# A.1 Remove old (-er than 2005) measurements and erroneous data (if DATA_FLAG is not nan)
-cond = ((glathida['SURVEY_DATE'] > args.tmin) & (glathida['DATA_FLAG'].isna()) & (glathida['THICKNESS']>=args.hmin))
-
+glathida = pd.concat([glathida, polar_extra], axis=0, ignore_index=True)
+cond = ((glathida['THICKNESS']>=args.hmin))
 glathida = glathida[cond]
-print(f'Original columns: {list(glathida)} \n')
+print(f"Unique ids: {len(glathida['RGIId'].unique())}")
+
+#for n, rgiid in enumerate(unique_rgiid_polar_extra):
+#    print(n, len(unique_rgiid_polar_extra), rgiid)
+#    glathida_x = glathida.loc[glathida['RGIId'] == rgiid]
+#    fig, ax = plt.subplots()
+#    s = ax.scatter(x=glathida_x['POINT_LON'], y=glathida_x['POINT_LAT'], c=glathida_x['THICKNESS'])
+#    cb = plt.colorbar(s)
+#    plt.show()
 
 # A.2 Keep only these columns
+cols_not_used = ['Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'Form', 'Aspect', 'TermType',]
 cols = ['RGI', 'RGIId', 'POINT_LAT', 'POINT_LON', 'THICKNESS', 'Area', 'Area_icefree', 'Perimeter',
-        'elevation', 'dmdtda_hugo', 'smb', 'dist_from_border_km_geom',
-       'Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'ith_m', 'ith_f',
+        'elevation', 'dmdtda_hugo', 'smb', 'dist_from_border_km_geom', 'ith_m', 'ith_f',
         'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
-        'Form', 'Aspect', 'TermType', 'v50', 'v100', 'v150', 'v300', 'v450', 'vgfa',
-        'curv_50', 'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa', 't2m', 'dist_from_ocean',
-        'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax', 'Cluster_area', 'Cluster_glaciers',
-        'Cluster_geometries', 'elevation_0_1']
+        'v50', 'v100', 'v150', 'v300', 'v450', 'vgfa',
+        'curv_50', 'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa', 'aspect_50', 'aspect_300', 'aspect_gfa',
+        't2m', 'dist_from_ocean', 'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax', 'Cluster_area',
+        'Cluster_glaciers', 'Cluster_geometries', 'elevation_0_1']
 
 glathida = glathida[cols]
-print(f'We keep only the following columns: \n {list(glathida)} \n{len(glathida)} rows')
 
 # A.3 Remove nans
+# RGI60-19.00707 will be removed from the dataset because velocities are zero
+# In general, missing velocity is the first cause for deleting otherwise good ground truth data (40k points)
 cols_dropna = [col for col in cols if col not in ('ith_m', 'ith_f')]
 glathida = glathida.dropna(subset=cols_dropna)
-
-#print(glathida.isna().sum())
 print(f'After having removed nans in all features except for ith_m and ith_f we have {len(glathida)} rows')
 
 """ B. Grid the dataset """
@@ -88,8 +107,7 @@ print(f'We have {len(rgi_ids)} unique glaciers and {len(glathida)} rows')
 #    print(rgi, len(glathida_rgi['RGIId'].unique().tolist()), len(glathida_rgi))
 #print(glathida['RGI'].value_counts())
 
-#glathida_gridded = pd.DataFrame(columns=glathida.columns) # slower
-gridded_data_list = []  # faster method
+gridded_data_list = []
 
 # These features are the local ones that I have to average
 features_to_grid = ['THICKNESS', 'elevation', 'smb', 'dist_from_border_km_geom',
@@ -104,7 +122,7 @@ list_num_measurements_after_grid = []
 # loop over unique glaciers
 for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", leave=True):
 
-    #rgiid = 'RGI60-05.04288'
+    #rgiid = 'RGI60-19.00707'
 
     glathida_id = glathida.loc[glathida['RGIId'] == rgiid]
     glathida_id_grid = pd.DataFrame(columns=glathida_id.columns)
@@ -117,14 +135,14 @@ for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", le
     area_noice = glathida_id['Area_icefree'].iloc[0]
     perimeter = glathida_id['Perimeter'].iloc[0]
     rgi = glathida_id['RGI'].iloc[0]
-    zmin = glathida_id['Zmin'].iloc[0]
-    zmax = glathida_id['Zmax'].iloc[0]
-    zmed = glathida_id['Zmed'].iloc[0]
-    Slope = glathida_id['Slope'].iloc[0]
-    lmax = glathida_id['Lmax'].iloc[0]
-    form = glathida_id['Form'].iloc[0]
-    aspect = glathida_id['Aspect'].iloc[0]
-    termtype = glathida_id['TermType'].iloc[0]
+    #zmin = glathida_id['Zmin'].iloc[0]
+    #zmax = glathida_id['Zmax'].iloc[0]
+    #zmed = glathida_id['Zmed'].iloc[0]
+    #Slope = glathida_id['Slope'].iloc[0]
+    #lmax = glathida_id['Lmax'].iloc[0]
+    #form = glathida_id['Form'].iloc[0]
+    #aspect = glathida_id['Aspect'].iloc[0]
+    #termtype = glathida_id['TermType'].iloc[0]
     dmdtda = glathida_id['dmdtda_hugo'].iloc[0]
 
     # new glacier-wide constant features calculated using dem
@@ -150,9 +168,8 @@ for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", le
 
     # if only one measurement, append that line as is
     if (len(glathida_id) == 1):
-        #glathida_gridded = pd.concat([glathida_gridded, glathida_id], ignore_index=True) # slow method
         list_num_measurements_after_grid.append(len(glathida_id))
-        gridded_data_list.append(glathida_id) # Append data to list (faster method)
+        gridded_data_list.append(glathida_id) # Append data to list
         continue
 
     # if more than one measurement, calculate the rectangular domain for gridding
@@ -186,11 +203,6 @@ for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", le
         xcenters = (xedges[:-1] + xedges[1:]) / 2
         ycenters = (yedges[:-1] + yedges[1:]) / 2
 
-        # old version: remove all nans.
-        # non_nan_mask = ~np.isnan(H) # boolean matrix of H of only non-nans
-        #x_indices, y_indices = np.where(non_nan_mask) # these are the indexes of non-non H
-        #print(x_indices.shape, y_indices.shape)
-
         # new version: keep all values
         indices = np.indices(H.shape)
         x_indices = indices[0].flatten() # These are instead the indexes of H
@@ -219,7 +231,7 @@ for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", le
 
         # plot
         ifplot = False
-        if (ifplot and feature == 'THICKNESS' and  rgiid=='RGI60-05.04288'):
+        if (ifplot and feature == 'THICKNESS' and rgiid == 'RGI60-19.00707'):
 
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
@@ -245,17 +257,15 @@ for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", le
     glathida_id_grid['Area'] = area
     glathida_id_grid['Area_icefree'] = area_noice
     glathida_id_grid['Perimeter'] = perimeter
-    glathida_id_grid['Zmin'] = zmin
-    glathida_id_grid['Zmax'] = zmax
-    glathida_id_grid['Zmed'] = zmed
-    glathida_id_grid['Slope'] = Slope
-    glathida_id_grid['Lmax'] = lmax
-    glathida_id_grid['Form'] = form
-    glathida_id_grid['TermType'] = termtype
-    glathida_id_grid['Aspect'] = aspect
+    #glathida_id_grid['Zmin'] = zmin
+    #glathida_id_grid['Zmax'] = zmax
+    #glathida_id_grid['Zmed'] = zmed
+    #glathida_id_grid['Slope'] = Slope
+    #glathida_id_grid['Lmax'] = lmax
+    #glathida_id_grid['Form'] = form
+    #glathida_id_grid['TermType'] = termtype
+    #glathida_id_grid['Aspect'] = aspect
     glathida_id_grid['dmdtda_hugo'] = dmdtda
-
-    # new
     glathida_id_grid['zmin'] = zmin_with_dem
     glathida_id_grid['zmax'] = zmax_with_dem
     glathida_id_grid['zmed'] = zmed_with_dem
@@ -268,13 +278,6 @@ for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", le
     glathida_id_grid['Cluster_glaciers'] = cluster_no_glaciers
     glathida_id_grid['Cluster_geometries'] = cluster_no_geometries
 
-    # append glacier gridded dataset to main gridded dataset
-    # In the first passage glathida_gridded will be empty so we copy glathida_id_grid
-    #if glathida_gridded.empty:
-    #    glathida_gridded = glathida_id_grid.copy()
-    #else:
-    #    glathida_gridded = pd.concat([glathida_gridded, glathida_id_grid], ignore_index=True)
-
     # Append data to list
     gridded_data_list.append(glathida_id_grid) # faster method
 
@@ -284,17 +287,12 @@ for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", le
 # Remove all nans from all features except for ith_m and ith_f
 glathida_gridded = pd.concat(gridded_data_list, ignore_index=True).dropna(subset=cols_dropna)
 #print(glathida_gridded.isna().sum())
-#print(glathida_gridded.isna().sum())
 
 print(f"Finished. No. original measurements {len(glathida)} down to {len(glathida_gridded)}, divided into:")
 print(f"{glathida_gridded['RGI'].value_counts()}")
 
 if args.save:
-    ext = args.input_metadata_file[args.input_metadata_file.rfind('.'):]
-    filename_out = (args.input_metadata_folder +
-                    args.input_metadata_file.replace(ext, f'_hmineq{args.hmin}_tmin{args.tmin}_{args.method_grid}_grid_{args.nbins_grid_latlon}{ext}'))
-    glathida_gridded.to_csv(filename_out, index=False)
-
-    print(f"Gridded dataframe saved: {filename_out}")
+    glathida_gridded.to_csv(f"{OUT_SAVE_FOLDER}/{filename_out}", index=False)
+    print(f"Training dataset saved: {OUT_SAVE_FOLDER}/{filename_out}")
 
 
