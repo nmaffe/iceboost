@@ -172,7 +172,6 @@ def calc_geoid_heights(lons=None, lats=None, h_wgs84=None):
     _, _, h_egm2008 = transformer.transform(lons, lats, h_wgs84)
     return h_egm2008
 
-#def calc_volume_glacier(y1=None, y2=None, area=0, h_egm2008=None):
 def calc_volume_glacier(y=None, area=0, h_egm2008=None):
 
     '''
@@ -343,29 +342,40 @@ def create_PIL_image(array, png_resolution=None):
     image_resized = image.resize((png_resolution, png_resolution), Image.Resampling.LANCZOS)
     return image_resized
 
-def get_rgi_products(region=None, version=None, input_glacier_shp_file=None, input_glacier_intersects_shp_file=None):
+def get_rgi_products(region=None, version=None, add_glacier_shp_file=None, add_glacier_intersects_shp_file=None):
+    """
+    :param region: rgi region 1 to 19
+    :param version: rgi version '62', '70G'
+    :param add_glacier_shp_file: if this shp file is provided, it will be added to the rgi dataframe
+    :param add_glacier_intersects_shp_file: if this shp file is provided, it will be added to the rgi dataframe
+    :return: regional glacier dataframe and regional graph of glacier connectivity
+    """
 
     if region is None: raise ValueError("You need to specify the region number as string. Exit.")
 
-    if version not in ('62', '70G'):
-        raise ValueError("Accepted RGI versions are 62 or 70G. Exit.")
+    if version not in ('62', '70G'): raise ValueError("Accepted RGI versions are 62 or 70G. Exit.")
 
     if not isinstance(region, str): region = f"{region:02d}"
 
-    # if shp is provided as input by user
-    if input_glacier_shp_file is not None:
-        FILE_SHP = input_glacier_shp_file
-        FILE_INTERSECTS_SHP = input_glacier_intersects_shp_file
+    FILE_SHP_RGI = utils.get_rgi_region_file(region=region, version=version)
+    FILE_INTERSECTS_SHP_RGI = utils.get_rgi_intersects_region_file(region=region, version=version)
 
-    # run randolph glacier inventory shp
-    else:
-        # get rgi region and intersect shp files
-        FILE_SHP = utils.get_rgi_region_file(region=region, version=version)
-        FILE_INTERSECTS_SHP = utils.get_rgi_intersects_region_file(region=region, version=version)
+    # get dataset of glaciers and intersects from rgi
+    rgi_glaciers = gpd.read_file(FILE_SHP_RGI, engine='pyogrio')
+    rgi_intersects = gpd.read_file(FILE_INTERSECTS_SHP_RGI, engine='pyogrio')
 
-    # get dataset of glaciers and glaciers intersects
-    rgi_glaciers = gpd.read_file(FILE_SHP, engine='pyogrio')
-    rgi_intersects = gpd.read_file(FILE_INTERSECTS_SHP, engine='pyogrio')
+    # if user has provided a glacier and intersect shp files, concatenate with rgi
+    if add_glacier_shp_file is not None:
+        rgi_glaciers_user_input = gpd.read_file(add_glacier_shp_file, engine='pyogrio')
+        rgi_intersects_user_input = gpd.read_file(add_glacier_intersects_shp_file, engine='pyogrio')
+
+        assert set(rgi_glaciers_user_input.columns).issubset(rgi_glaciers.columns), \
+            "Incompatible concatenation with custom glacier dataframes"
+        assert set(rgi_intersects_user_input.columns).issubset(rgi_intersects.columns), \
+            "Incompatible concatenation with custom intersect glacier dataframes"
+
+        rgi_glaciers = pd.concat([rgi_glaciers, rgi_glaciers_user_input], ignore_index=True)
+        rgi_intersects = pd.concat([rgi_intersects, rgi_intersects_user_input], ignore_index=True)
 
     # create graph of connectivity needed for distance calculations
     rgi_graph = networkx.Graph()
@@ -376,14 +386,76 @@ def get_rgi_products(region=None, version=None, input_glacier_shp_file=None, inp
 
     rgi_graph.add_edges_from(edges)
 
+    rgi_products = (rgi_glaciers, rgi_graph)
+
+    return rgi_products
+
+
+def add_regional_features(df=None):
+    """
+    :param df: regional dataframe with glacier geometries
+    :return: df with added 'area', 'area_icefree', 'perimeter', 'cen_lat', 'cen_lon', 'cen_epsg'
+    """
+
+    geod = Geod(ellps="WGS84")
+
+    def calc_feats(geometry):
+        area, perimeter = geod.geometry_area_perimeter(geometry)
+        area = abs(area) * 1e-6
+        geometry_ext = Polygon(geometry.exterior)
+        gl_geom_ext_gdf = gpd.GeoDataFrame(geometry=[geometry_ext], crs="EPSG:4326")
+        area_ice_and_noince, _ = geod.geometry_area_perimeter(geometry_ext)
+        area_ice_and_noince = abs(area_ice_and_noince) * 1e-6
+
+        # Calculate area of nunataks in percentage to the total area
+        area_noice = 1 - area / area_ice_and_noince
+
+        glacier_centroid = geometry_ext.centroid
+        cenLon, cenLat = glacier_centroid.x, glacier_centroid.y
+        _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(cenLat, cenLon)
+
+        lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg)
+
+        return (area,  # Area in km²,
+                area_noice,  # unitless,
+                perimeter,  # perimeter in meters
+                lmax,    # m
+                cenLat,  # degrees north
+                cenLon,  # degrees east
+                glacier_epsg)  # espg
+
+    # apply the function and unpack results
+    results = np.array(df['geometry'].apply(calc_feats).to_list())
+    df[['area', 'area_icefree', 'perimeter', 'lmax', 'cen_lat', 'cen_lon', 'cen_epsg']] = results
+    df['cen_epsg'] = df['cen_epsg'].astype(int)
+
+    return df
+
+def get_mass_balance_df(region=None):
     # mass balance rgi dataframe
     mbdf = utils.get_geodetic_mb_dataframe()
     mbdf = mbdf.loc[mbdf['period'] == '2000-01-01_2020-01-01']
     mbdf_rgi = mbdf.loc[mbdf['reg'] == int(region)]
+    assert len(mbdf_rgi)>0, "Mass balance dataframe error in import."
 
-    rgi_products = (rgi_glaciers, rgi_graph, mbdf_rgi)
+    return mbdf_rgi
 
-    return rgi_products
+def get_glacier_geometries(ids=None, glacier_geo_df=None, version=None):
+
+    if version == '62':
+        name_column_id = 'RGIId'
+        name_column_name = 'Name'
+    elif version == '70G':
+        name_column_id = 'rgi_id'
+        name_column_name = 'glac_name'
+    else:
+        raise ValueError("Version not supported.")
+
+    glacier_geometries = glacier_geo_df.loc[glacier_geo_df[name_column_id].isin(ids), 'geometry']
+    glacier_geometries = glacier_geometries.to_crs("EPSG:4326")
+    assert len(glacier_geometries) > 0, "Geometries not found."
+
+    return glacier_geometries
 
 def get_coastline_dataframe(GSHHG_folder):
     gdf16 = gpd.read_file(f'{GSHHG_folder}GSHHS_f_L1_L6.shp', engine='pyogrio')
@@ -418,8 +490,8 @@ def find_cluster_with_graph(graph, start_node, max_depth=None):
 
     return list(nodes_at_depth)
 
+def get_possible_cluster(graph, start_node, glacier_epsg, rgi, rgi_glaciers, name_column_id):
 
-def get_possible_cluster(graph, start_node, glacier_epsg, rgi, oggm_rgi_glaciers, name_column_id):
     if not graph.has_node(start_node):
         return False  # Return False if the start node is not in the graph (isolated glacier)
 
@@ -431,38 +503,34 @@ def get_possible_cluster(graph, start_node, glacier_epsg, rgi, oggm_rgi_glaciers
     cluster_min_depth = networkx.radius(cluster)
     cluster_no_nodes = cluster.number_of_nodes()
     cluster_no_edges = cluster.number_of_edges()
+    #print(cluster_min_depth, cluster_no_nodes, cluster_no_edges)
+
+    # Step 3: create cluster dataframe with ids, area, perimeter and lmax
+    df_cluster = rgi_glaciers.loc[rgi_glaciers[name_column_id].isin(cluster_nodes), [name_column_id, 'area', 'perimeter', 'lmax']]
+    df_cluster = df_cluster.set_index(name_column_id).rename_axis('cluster_IDs')
+    cluster_area = float(df_cluster['area'].sum())
+    max_area_for_clustering = 10000  # km2
+
+    # Step 4: calculate cluster complexity based on graph parameters and cluster total area
     if rgi == 3: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 50 and cluster_no_edges <= 90)
     elif rgi == 4: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
     elif rgi == 5: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
     elif rgi == 6: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 100 and cluster_no_edges <= 999)
     elif rgi == 7: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
     elif rgi == 9: is_low_complexity = (cluster_min_depth <= 12 and cluster_no_nodes <= 144 and cluster_no_edges <= 252)
-    elif rgi == 19: is_low_complexity = (cluster_min_depth <= 3 and cluster_no_nodes <= 30 and cluster_no_edges <= 40)
+    #elif rgi == 19: is_low_complexity = (cluster_min_depth <= 3 and cluster_no_nodes <= 30 and cluster_no_edges <= 40)
+    elif rgi == 19: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 44 and cluster_no_edges <= 75)
     else: raise ValueError(f"Deploy on cluster not supported for rgi {rgi}")
     #print(cluster_min_depth, cluster_no_nodes, cluster_no_edges, is_low_complexity)
 
-    # Step 3: If cluster too complex, exit.
+    is_low_complexity = is_low_complexity and cluster_area < max_area_for_clustering
+
+    # Step 4: if cluster too complex, return False, otherwise return cluster dataframe
     if is_low_complexity is False:
         return False
+    else:
+        return df_cluster
 
-    # Step 4: Initialize a dataframe with cluster ids, Area, Perimeter, lmax
-    df_cluster = pd.DataFrame(0.0, index=list(cluster_nodes), columns=['Area', 'Perimeter', 'lmax'])
-    df_cluster.index.name = 'cluster_IDs'
-    for glacier_name in df_cluster.index:
-        gl_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == glacier_name]
-        gl_geom = gl_df['geometry'].item()  # glacier geometry Polygon
-        gl_geom_ext = Polygon(gl_geom.exterior)
-        gl_geom_ext_gdf = gpd.GeoDataFrame(geometry=[gl_geom_ext], crs="EPSG:4326")
-        lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg) # we use the epsg of the starting glacier for all
-        area, perimeter = Geod(ellps="WGS84").geometry_area_perimeter(gl_geom)
-        area = abs(area) * 1e-6  # km^2
-        df_cluster.loc[glacier_name, 'Area'] = area
-        df_cluster.loc[glacier_name, 'Perimeter'] = perimeter
-        df_cluster.loc[glacier_name, 'lmax'] = lmax
-        #print(glacier_name, '\t', area, perimeter, lmax)
-
-    # Return cluster dataframe with IDs, Area, Perimeter and lmax values
-    return df_cluster
 
 def normalized_elevation(h, Hmin, Hmax):
     '''
@@ -499,6 +567,8 @@ def get_version_and_rgi_from_id(id):
     elif id.startswith('RGI2000'):
         version_rgi = '70G'
         rgi = id[15:17]
+
+    else: raise ValueError("Glacier id starts with unexpected string. Exit.")
 
     return rgi, version_rgi
 
@@ -653,7 +723,7 @@ def generate_points(gdf_ext=None, gdf_nuns=None, n_points_regression=None, seed=
     return points
 
 
-def geographic_split_adaptive(glaciers_df, n_jobs, version):
+def geographic_split_adaptive(glaciers_df=None, n_jobs=None, version=None):
     """
     Split glaciers into n_jobs geographic chunks, adapting to aspect ratio.
     Args:
@@ -665,14 +735,19 @@ def geographic_split_adaptive(glaciers_df, n_jobs, version):
 
     if version == '62':
         name_column_id = 'RGIId'
-        name_column_area = 'Area'
-        name_column_name = 'Name'
+        #name_column_area = 'Area'
+        #name_column_name = 'Name'
         name_column_lon, name_column_lat = 'CenLon', 'CenLat'
     elif version == '70G':
         name_column_id = 'rgi_id'
-        name_column_area = 'area_km2'
-        name_column_name = 'glac_name'
+        #name_column_area = 'area_km2'
+        #name_column_name = 'glac_name'
         name_column_lon, name_column_lat = 'cenlon', 'cenlat'
+
+    # Since some custom glacier ids may be present in glaciers_df (with no centers from rgi), let's calculate glacier centers
+    name_column_lon, name_column_lat = "centroid_lon", "centroid_lat"
+    glaciers_df[name_column_lon] = glaciers_df.geometry.representative_point().x
+    glaciers_df[name_column_lat] = glaciers_df.geometry.representative_point().y
 
     if n_jobs == 1:
         split_ids = glaciers_df[name_column_id].to_list()
