@@ -592,6 +592,7 @@ def plot_feature_scatter(config, test_glacier):
 
     for idx, feat in enumerate(feats):
         sc = axes[idx].scatter(x=test_glacier['lons'], y=test_glacier['lats'], c=test_glacier[feat], s=1, cmap='jet')
+        cb = plt.colorbar(sc)
         axes[idx].set_xticks([])
         axes[idx].set_yticks([])
         axes[idx].tick_params(labelbottom=False, labelleft=False)
