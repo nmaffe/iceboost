@@ -16,6 +16,7 @@ from oggm import utils
 import geopandas as gpd
 from tqdm import tqdm
 from scipy import spatial
+import networkx
 from astropy.convolution import Gaussian2DKernel, convolve, convolve_fft
 from sklearn.neighbors import KDTree
 import shapely
@@ -60,7 +61,6 @@ parser.add_argument('--path_O1Regions_shp', type=str,default="/home/maffe/OGGM/r
                     help="Path to OGGM's 00_rgi62_O1Regions.shp shapefiles of all 19 RGI regions")
 parser.add_argument('--mosaic', type=str,default="/media/maffe/nvme/Tandem-X-EDEM/",
                     help="Path to DEM mosaics")
-parser.add_argument('--oggm', type=str,default="/home/maffe/OGGM/", help="Path to OGGM folder")
 parser.add_argument('--millan_velocity_folder', type=str,default="/media/maffe/nvme/Millan/velocity/",
                     help="Path to Millan velocity data")
 parser.add_argument('--millan_icethickness_folder', type=str,default="/media/maffe/nvme/Millan/thickness/",
@@ -75,13 +75,18 @@ parser.add_argument('--NSIDC_icethickness_folder_Antarctica', type=str,default="
                     help="Path to AnIS velocity data")
 parser.add_argument('--farinotti_icethickness_folder', type=str,default="/media/maffe/nvme/Farinotti/composite_thickness_RGI60-all_regions/",
                     help="Path to Farinotti ice thickness data")
-parser.add_argument('--OGGM_folder', type=str,default="/home/maffe/OGGM", help="Path to OGGM main folder")
+parser.add_argument('--add_glacier_shp_file',
+                    type=str,default="/media/maffe/nvme/Antarctic_peninsula_geometries/final_product/antarctic_peninsula.shp",
+                    help="add Antarctic Peninsula shp file")
+parser.add_argument('--add_glacier_intersect_shp_file',
+                    type=str,default="/media/maffe/nvme/Antarctic_peninsula_geometries/final_product/antarctic_peninsula_intersects.shp",
+                    help="add Antarctic Peninsula intersects shp file")
 parser.add_argument('--RACMO_folder', type=str,default="/media/maffe/nvme/racmo", help="Path to RACMO main folder")
 parser.add_argument('--path_ERA5_t2m_folder', type=str,default="/media/maffe/nvme/ERA5/", help="Path to ERA5 folder")
 parser.add_argument('--GSHHG_folder', type=str,default="/media/maffe/nvme/gshhg/", help="Path to GSHHG folder")
 parser.add_argument('--save', type=int, default=0, help="Save final dataset or not.")
 parser.add_argument('--save_outname', type=str,
-            default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata38",
+            default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/glathida41",
             help="Saved dataframe name.")
 parser.add_argument('--config', type=str, default="config/config.yaml", help="Path to yaml config file")
 
@@ -105,8 +110,7 @@ def add_rgi(glathida, path_O1_shp):
     glathida['RGI'] = [np.nan]*len(glathida)
     lats = glathida['POINT_LAT']
     lons = glathida['POINT_LON']
-    #points = [Point(ilon, ilat) for (ilon, ilat) in zip(lons, lats)] # slower
-    points = list(gpd.points_from_xy(lons, lats)) # faster
+    points = list(gpd.points_from_xy(lons, lats))
 
     # Define the regions
     region1a = world.loc[0]['geometry']
@@ -698,7 +702,7 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
 
     if (any(ele in list(glathida) for ele in ['ith_m', 'v50', 'v100'])):
         print('Variable already in dataframe.')
-        #return glathida
+        return glathida
 
     glathida['ith_m'] = [np.nan] * len(glathida)
     glathida['v50'] = [np.nan] * len(glathida)
@@ -753,7 +757,8 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
             indexes_id = glathida_id.index.tolist()
 
             eastings_id, northings_id = (Transformer.from_crs("EPSG:4326", vx_NSIDC.rio.crs)
-                                         .transform(glathida_id['POINT_LAT'], glathida_id['POINT_LON']))
+                                         .transform(glathida_id['POINT_LAT'].to_numpy(),
+                                                    glathida_id['POINT_LON'].to_numpy()))
 
             eastings_rgi_id_ar = xarray.DataArray(eastings_id)
             northings_rgi_id_ar = xarray.DataArray(northings_id)
@@ -1047,7 +1052,8 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
             indexes_id = glathida_id.index.tolist()
 
             eastings_id, northings_id = (Transformer.from_crs("EPSG:4326", vx_NSIDC.rio.crs)
-                                         .transform(glathida_id['POINT_LAT'], glathida_id['POINT_LON']))
+                                         .transform(glathida_id['POINT_LAT'].to_numpy(),
+                                                    glathida_id['POINT_LON'].to_numpy()))
 
             eastings_rgi_id_ar = xarray.DataArray(eastings_id)
             northings_rgi_id_ar = xarray.DataArray(northings_id)
@@ -1125,7 +1131,6 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
             f"/{np.sum(np.isnan(glathida_rgi_['v100']))}/{np.sum(np.isnan(glathida_rgi_['v150']))}/{np.sum(np.isnan(glathida_rgi_['v300']))}/"
             f"{np.sum(np.isnan(glathida_rgi_['v450']))}/{np.sum(np.isnan(glathida_rgi_['vgfa']))}")
 
-
     for rgi in [5,]:
 
         glathida_rgi = glathida.loc[glathida['RGI'] == rgi]
@@ -1150,8 +1155,8 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
         tile_ith.rio.write_nodata(np.nan, inplace=True)
         tile_ith = tile_ith.squeeze()
 
-        eastings, northings = Transformer.from_crs("EPSG:4326", tile_ith.rio.crs).transform(glathida_rgi['POINT_LAT'],
-                                                                                            glathida_rgi['POINT_LON'])
+        eastings, northings = Transformer.from_crs("EPSG:4326", tile_ith.rio.crs).transform(glathida_rgi['POINT_LAT'].to_numpy(),
+                                                                                            glathida_rgi['POINT_LON'].to_numpy())
         eastings_ar = xarray.DataArray(eastings)
         northings_ar = xarray.DataArray(northings)
 
@@ -1315,405 +1320,6 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
             glathida.loc[indexes_id, 'v450'] = v_filter_450_data
             glathida.loc[indexes_id, 'vgfa'] = v_filter_af_data
 
-        """
-        # ----------------------------------------------------------------------------------------
-        # OLD GROUP METHOD THAT USES MILLAN ITH TILES (AND NSIDC VELOCITIES)
-        # I need a dataframe for Millan with same indexes and lats lons
-        df_pointsM = glathida_rgi[['POINT_LAT', 'POINT_LON']].copy()
-        df_pointsM = df_pointsM.assign(**{col: pd.Series() for col in files_ith})
-
-        # Fill the dataframe for occupancy
-        tocc0 = time.time()
-        for i, file_ith in enumerate(files_ith):
-            #print(i, file_ith)
-            tile_ith = rioxarray.open_rasterio(file_ith, masked=False)
-
-            eastings, northings = Transformer.from_crs("EPSG:4326", tile_ith.rio.crs).transform(df_pointsM['POINT_LAT'],
-                                                                                               df_pointsM['POINT_LON'])
-
-            df_pointsM['eastings'] = eastings
-            df_pointsM['northings'] = northings
-
-            # Get the points inside the tile
-            left, bottom, right, top = tile_ith.rio.bounds()
-
-            within_bounds_mask = (
-                    (df_pointsM['eastings'] >= left) &
-                    (df_pointsM['eastings'] <= right) &
-                    (df_pointsM['northings'] >= bottom) &
-                    (df_pointsM['northings'] <= top))
-
-            df_pointsM.loc[within_bounds_mask, file_ith] = 1
-
-        df_pointsM.drop(columns=['eastings', 'northings'], inplace=True)
-        ncols = df_pointsM.shape[1]
-        print(f"Created dataframe of occupancies for all points in {time.time() - tocc0} s.")
-
-        # Grouping by ith occupancy. Each group will have an occupancy value
-        df_pointsM['ntiles_ith'] = df_pointsM.iloc[:, 2:].sum(axis=1)
-        print(df_pointsM['ntiles_ith'].value_counts())
-        groups_rgi5 = df_pointsM.groupby('ntiles_ith')  # Groups.
-        df_pointsM.drop(columns=['ntiles_ith'], inplace=True)  # Remove this column that we used to create groups
-        print(f"Num groups in Millan: {groups_rgi5.ngroups}")
-
-
-        # Loop over k groups
-        for k, (g_value, df_rgi_k) in enumerate(groups_rgi5):
-            print(f"Group {k + 1}/{groups_rgi5.ngroups} with {len(df_rgi_k)} measurements")
-
-            indexes_rgi_k = df_rgi_k.index
-
-            # Insert this column at the beginning since we need it (at the beginning)
-            # As a result df_rgi_k columns will be: |GlaThiDa_ID|POINT_LAT|POINT_LON|<ithtiles>|,
-            # there are 3 columns at the beginning and then the tiles
-            df_rgi_k.insert(0, 'GlaThiDa_ID', glathida_rgi.loc[indexes_rgi_k, 'GlaThiDa_ID'])
-
-            # Get unique IDs of ids_rgi_k
-            ids_rgi_k = df_rgi_k['GlaThiDa_ID'].unique().tolist()
-
-            # loop over the unique IDs of group k
-            for id_rgi_k in tqdm(ids_rgi_k, total=len(ids_rgi_k), desc=f"rgi {rgi} group {k+1}/{groups_rgi5.ngroups} Glathida ID",
-                               leave=True):
-
-                # FORCE AN ID FOR DEBUGGING
-                # id_rgi_k = 2752
-
-                # Get dataframe for group k and id
-                df_rgi_k_id = df_rgi_k.loc[df_rgi_k['GlaThiDa_ID'] == id_rgi_k]
-                indexes_rgi_k_id = df_rgi_k_id.index.tolist()
-
-                # Get the unique valid tiles for each id
-                unique_ith_tiles_k_id = df_rgi_k_id.iloc[:, 3:].columns[df_rgi_k_id.iloc[:, 3:].sum() != 0].tolist()
-
-                lats_rgi_k_id = np.array(df_rgi_k_id['POINT_LAT'])
-                lons_rgi_k_id = np.array(df_rgi_k_id['POINT_LON'])
-
-                valid_ith_tile_rgi_k_id = None
-
-                # Loop over tiles for group k and id
-                for t, file_ith in enumerate(unique_ith_tiles_k_id):
-                    #print(f"Tile {t}, {file_ith}")
-                    tile_ith = rioxarray.open_rasterio(file_ith, masked=False)
-
-                    if tile_ith.rio.nodata is None: tile_ith.rio.write_nodata(np.nan, inplace=True)
-
-                    assert tile_ith.rio.crs == "EPSG:3413", "projection not expected for Greenland Millan tiles."
-
-                    eastings_rgi_k_id, northings_rgi_k_id = (Transformer.from_crs("EPSG:4326",tile_ith.rio.crs)
-                                                            .transform(lats_rgi_k_id, lons_rgi_k_id))
-                    minE, maxE = min(eastings_rgi_k_id), max(eastings_rgi_k_id)
-                    minN, maxN = min(northings_rgi_k_id), max(northings_rgi_k_id)
-                    # print(f"Boundaries measurements: {minE, minN, maxE, maxN}")
-                    # print(f"tile {t} bounds {tile_ith.rio.bounds()}")
-
-                    #fig, ax = plt.subplots()
-                    #tile_ith.plot(ax=ax, cmap='viridis')
-                    #ax.scatter(x=eastings_rgi_k_id, y=northings_rgi_k_id, c='k')
-                    #plt.show()
-
-                    epsM = 500
-                    try:
-                        tile_ith = tile_ith.rio.clip_box(minx=minE - epsM, miny=minN - epsM, maxx=maxE + epsM, maxy=maxN + epsM)
-
-                        # Condition 1. Either ith is .rio.nodata or it is zero or it is nan
-                        cond0 = np.all(tile_ith.values == 0)
-                        condnodata = np.all(np.abs(tile_ith.values - tile_ith.rio.nodata) < 1.e-6)
-                        condnan = np.all(np.isnan(tile_ith.values))
-                        #print(cond0, condnodata, condnan)
-                        #print(np.all(np.abs(tile_ith.values - tile_ith.rio.nodata) < 1.e-6))
-                        #print(tile_ith.rio.nodata)
-                        #all_zero_or_nodata = np.all(
-                        #    np.logical_or(tile_ith.values == 0, tile_ith.values == tile_ith.rio.nodata))
-                        all_zero_or_nodata = cond0 or condnodata or condnan
-
-                        #print(f"Tile {t} condition {all_zero_or_nodata} {np.sum(tile_ith.values)} {tile_ith.rio.nodata}")
-                        #input('wait')
-                        #fig, ax = plt.subplots()
-                        #tile_ith.plot(ax=ax, cmap='viridis')
-                        #plt.show()
-
-                        if all_zero_or_nodata:
-                            # The tile t is not valid. Go to next tile
-                            print('The tile t is not valid. Go to next tile')
-                            continue
-
-                        # Condition no. 2. A fast and quick interpolation to see if points intercepts a valid raster region
-                        vals_fast_interp = tile_ith.interp(y=xarray.DataArray(northings_rgi_k_id),
-                                                           x=xarray.DataArray(eastings_rgi_k_id),
-                                                           method='nearest').data
-
-                        cond_valid_fast_interp = (np.isnan(vals_fast_interp).all() or
-                            np.all(np.abs(vals_fast_interp - tile_ith.rio.nodata) < 1.e-6))
-
-                        if cond_valid_fast_interp:
-                            continue
-
-                        valid_ith_tile_rgi_k_id = tile_ith
-
-                    except:
-                        # The tile t could not include id_rgi_k data, go to next tile
-                        tqdm.write(f'No millan data for rgi {rgi} group {k} GlaThiDa_ID {id_rgi_k} tile {t}')
-                        continue
-
-                if valid_ith_tile_rgi_k_id is None:
-                    print(f"Impossible to get valid tile for group {k} ID {id_rgi_k}, no. meas {len(df_rgi_k_id)}.")
-
-                else:
-                    # We should have found the valid tile if we have reached this point
-
-                    tile_ith = valid_ith_tile_rgi_k_id
-
-                    # Mask nodata and inf values with np.nan
-                    tile_ith.values = np.where((tile_ith.values == tile_ith.rio.nodata) | np.isinf(tile_ith.values),
-                                               np.nan, tile_ith.values)
-
-                    tile_ith.rio.write_nodata(np.nan, inplace=True)
-
-                    # Note: for rgi 5 we do not interpolate to remove nans.
-                    tile_ith = tile_ith.squeeze()
-
-                    eastings_rgi_k_id_ar = xarray.DataArray(eastings_rgi_k_id)
-                    northings_rgi_k_id_ar = xarray.DataArray(northings_rgi_k_id)
-
-                    # Interpolate (note: nans can be produced near boundaries).
-                    ith_data = tile_ith.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar, method="nearest").data
-
-                    #fig, ax = plt.subplots()
-                    #tile_ith.plot(ax=ax, cmap='viridis', vmin=tile_ith.min(), vmax=tile_ith.max())
-                    #ax.scatter(x=eastings_rgi_k_id_ar, y=northings_rgi_k_id_ar, s=20, ec='k', c=ith_data, vmin=tile_ith.min(), vmax=tile_ith.max())
-                    #plt.show()
-
-                    # Fill dataframe with ith_m
-                    glathida.loc[indexes_rgi_k_id, 'ith_m'] = ith_data
-
-
-                '''At this point I am ready to interpolate the NSIDC velocity'''
-                tile_vx = rioxarray.open_rasterio(file_vx, masked=False)
-                tile_vy = rioxarray.open_rasterio(file_vy, masked=False)
-                assert tile_vx.rio.bounds() == tile_vy.rio.bounds(), 'Different bounds found.'
-                assert tile_vx.rio.crs == tile_vy.rio.crs, 'Different crs found.'
-
-                for tile in [tile_vx, tile_vy]:
-                    if tile.rio.nodata is None:
-                        tile.rio.write_nodata(np.nan, inplace=True)
-
-                eastings_rgi_k_id, northings_rgi_k_id = (Transformer.from_crs("EPSG:4326", tile_ith.rio.crs)
-                                                         .transform(lats_rgi_k_id, lons_rgi_k_id))
-
-                eastings_rgi_k_id_ar = xarray.DataArray(eastings_rgi_k_id)
-                northings_rgi_k_id_ar = xarray.DataArray(northings_rgi_k_id)
-
-                minE, maxE = min(eastings_rgi_k_id), max(eastings_rgi_k_id)
-                minN, maxN = min(northings_rgi_k_id), max(northings_rgi_k_id)
-
-                epsNSIDC = 500
-                tile_vx = tile_vx.rio.clip_box(minx=minE - epsNSIDC, miny=minN - epsNSIDC, maxx=maxE + epsNSIDC, maxy=maxN + epsNSIDC)
-                tile_vy = tile_vy.rio.clip_box(minx=minE - epsNSIDC, miny=minN - epsNSIDC, maxx=maxE + epsNSIDC, maxy=maxN + epsNSIDC)
-
-                # Condition for NSIDC v
-                tile_vx_is_all_nodata = np.all(tile_vx.values == tile_vx.rio.nodata)
-
-                # If we have some NSIDC data
-                if not tile_vx_is_all_nodata:
-                    tile_vx.values = np.where((tile_vx.values == tile_vx.rio.nodata) | np.isinf(tile_vx.values),
-                                               np.nan, tile_vx.values)
-                    tile_vy.values = np.where((tile_vy.values == tile_vy.rio.nodata) | np.isinf(tile_vy.values),
-                                               np.nan, tile_vy.values)
-                    #tile_vx.values[tile_vx.values == tile_vx.rio.nodata] = np.nan
-                    #tile_vy.values[tile_vy.values == tile_vy.rio.nodata] = np.nan
-                    tile_vx.rio.write_nodata(np.nan, inplace=True)
-                    tile_vy.rio.write_nodata(np.nan, inplace=True)
-
-                    assert tile_vx.rio.crs == tile_vy.rio.crs == tile_ith.rio.crs, "NSIDC tiles vx, vy with different epsg."
-                    assert tile_vx.rio.resolution() == tile_vy.rio.resolution(), "NSIDC vx, vy have different resolution."
-                    assert tile_vx.rio.bounds() == tile_vy.rio.bounds(), "NSIDC vx, vy bounds not the same"
-
-                    # Note: for rgi 5 we do not interpolate NSIDC to remove nans.
-                    tile_vx = tile_vx.squeeze()
-                    tile_vy = tile_vy.squeeze()
-
-                    ris_metre_nsidc = tile_vx.rio.resolution()[0]  # 250m
-
-                    # Calculate sigma in meters for adaptive gaussian fiter
-                    sigma_af_min, sigma_af_max = 100.0, 2000.0
-                    try:
-                        area_id = glathida_rgi.loc[indexes_rgi_k_id, 'Area'].min()
-                        lmax_id = glathida_rgi.loc[indexes_rgi_k_id, 'Lmax'].max()
-                        #print('area', area_id, 'lmax', lmax_id)
-                        # print(lats_rgi_k_id.min(), lats_rgi_k_id.max(), lons_rgi_k_id.min(), lons_rgi_k_id.max(), area_id)
-                        # Each id_rgi may come with multiple area values and also nans (probably if all points outside glacier geometries)
-                        # area_id = glathida_rgi_tile_id['Area'].min()  # km2
-                        # lmax_id = glathida_rgi_tile_id['Lmax'].max()  # m
-                        a = 1e6 * area_id / (np.pi * 0.5 * lmax_id)
-                        sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
-                        # print(area_id, lmax_id, a, value)
-                    except Exception as e:
-                        sigma_af = sigma_af_min
-                    # Ensure that our value correctly in range [50.0, 2000.0]
-                    assert sigma_af_min <= sigma_af <= sigma_af_max, f"Value {sigma_af} is not within the range [{sigma_af_min}, {sigma_af_max}]"
-                    # print(f"Adaptive gaussian filter with sigma = {value} meters.")
-
-                    # Calculate how many pixels I need for a resolution of xx
-                    # Since NDIDC has res of 250 m, num pixels will can be very small.
-                    num_px_sigma_50 = max(1, round(50 / ris_metre_nsidc))
-                    num_px_sigma_100 = max(1, round(100 / ris_metre_nsidc))
-                    num_px_sigma_150 = max(1, round(150 / ris_metre_nsidc))
-                    num_px_sigma_300 = max(1, round(300 / ris_metre_nsidc))
-                    num_px_sigma_450 = max(1, round(450 / ris_metre_nsidc))
-                    num_px_sigma_af = max(1, round(sigma_af / ris_metre_nsidc))
-
-                    kernel50 = Gaussian2DKernel(num_px_sigma_50, x_size=4 * num_px_sigma_50 + 1, y_size=4 * num_px_sigma_50 + 1)
-                    kernel100 = Gaussian2DKernel(num_px_sigma_100, x_size=4 * num_px_sigma_100 + 1, y_size=4 * num_px_sigma_100 + 1)
-                    kernel150 = Gaussian2DKernel(num_px_sigma_150, x_size=4 * num_px_sigma_150 + 1, y_size=4 * num_px_sigma_150 + 1)
-                    kernel300 = Gaussian2DKernel(num_px_sigma_300, x_size=4 * num_px_sigma_300 + 1, y_size=4 * num_px_sigma_300 + 1)
-                    kernel450 = Gaussian2DKernel(num_px_sigma_450, x_size=4 * num_px_sigma_450 + 1, y_size=4 * num_px_sigma_450 + 1)
-                    kernelaf = Gaussian2DKernel(num_px_sigma_af, x_size=4 * num_px_sigma_af + 1, y_size=4 * num_px_sigma_af + 1)
-
-                    tile_v = tile_vx.copy(deep=True, data=(tile_vx ** 2 + tile_vy ** 2) ** 0.5)
-
-                    # A check to see if velocity modules is as expected
-                    assert float(tile_v.sum()) > 0, "tile v is not as expected."
-
-                    '''astropy'''
-                    preserve_nans = True
-                    focus_filter_v50 = convolve_fft(tile_v.values, kernel50, nan_treatment='interpolate',
-                                                    preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    focus_filter_v100 = convolve_fft(tile_v.values, kernel100, nan_treatment='interpolate',
-                                                     preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    focus_filter_v150 = convolve_fft(tile_v.values, kernel150, nan_treatment='interpolate',
-                                                     preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    focus_filter_v300 = convolve_fft(tile_v.values, kernel300, nan_treatment='interpolate',
-                                                     preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    focus_filter_v450 = convolve_fft(tile_v.values, kernel450, nan_treatment='interpolate',
-                                                     preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    focus_filter_af = convolve_fft(tile_v.values, kernelaf, nan_treatment='interpolate',
-                                                   preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-
-                    #focus_filter_vx_50 = convolve_fft(tile_vx.values.squeeze(), kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vx_100 = convolve_fft(tile_vx.values.squeeze(), kernel100, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vx_150 = convolve_fft(tile_vx.values.squeeze(), kernel150, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vx_300 = convolve_fft(tile_vx.values.squeeze(), kernel300, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vx_450 = convolve_fft(tile_vx.values.squeeze(), kernel450, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vx_af = convolve_fft(tile_vx.values.squeeze(), kernelaf, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-
-                    #focus_filter_vy_50 = convolve_fft(tile_vy.values.squeeze(), kernel50, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vy_100 = convolve_fft(tile_vy.values.squeeze(), kernel100, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vy_150 = convolve_fft(tile_vy.values.squeeze(), kernel150, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vy_300 = convolve_fft(tile_vy.values.squeeze(), kernel300, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vy_450 = convolve_fft(tile_vy.values.squeeze(), kernel450, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-                    #focus_filter_vy_af = convolve_fft(tile_vy.values.squeeze(), kernelaf, nan_treatment='interpolate', preserve_nan=preserve_nans, boundary='fill', fill_value=np.nan)
-
-
-                    # create xarrays of filtered velocities
-                    focus_filter_v50_ar = tile_v.copy(deep=True, data=focus_filter_v50)
-                    focus_filter_v100_ar = tile_v.copy(deep=True, data=focus_filter_v100)
-                    focus_filter_v150_ar = tile_v.copy(deep=True, data=focus_filter_v150)
-                    focus_filter_v300_ar = tile_v.copy(deep=True, data=focus_filter_v300)
-                    focus_filter_v450_ar = tile_v.copy(deep=True, data=focus_filter_v450)
-                    focus_filter_vfa_ar = tile_v.copy(deep=True, data=focus_filter_af)
-
-                    #focus_filter_vx_50_ar = tile_vx.copy(deep=True, data=focus_filter_vx_50)
-                    #focus_filter_vx_100_ar = tile_vx.copy(deep=True, data=focus_filter_vx_100)
-                    #focus_filter_vx_150_ar = tile_vx.copy(deep=True, data=focus_filter_vx_150)
-                    #focus_filter_vx_300_ar = tile_vx.copy(deep=True, data=focus_filter_vx_300)
-                    #focus_filter_vx_450_ar = tile_vx.copy(deep=True, data=focus_filter_vx_450)
-                    #focus_filter_vx_af_ar = tile_vx.copy(deep=True, data=focus_filter_vx_af)
-                    #focus_filter_vy_50_ar = tile_vy.copy(deep=True, data=focus_filter_vy_50)
-                    #focus_filter_vy_100_ar = tile_vy.copy(deep=True, data=focus_filter_vy_100)
-                    #focus_filter_vy_150_ar = tile_vy.copy(deep=True, data=focus_filter_vy_150)
-                    #focus_filter_vy_300_ar = tile_vy.copy(deep=True, data=focus_filter_vy_300)
-                    #focus_filter_vy_450_ar = tile_vy.copy(deep=True, data=focus_filter_vy_450)
-                    #focus_filter_vy_af_ar = tile_vy.copy(deep=True, data=focus_filter_vy_af)
-
-                    # Calculate the velocity gradients
-                    #dvx_dx_ar, dvx_dy_ar = focus_filter_vx_300_ar.differentiate(
-                    #    coord='x'), focus_filter_vx_300_ar.differentiate(coord='y')
-                    #dvy_dx_ar, dvy_dy_ar = focus_filter_vy_300_ar.differentiate(
-                    #    coord='x'), focus_filter_vy_300_ar.differentiate(coord='y')
-
-                    # Interpolate (note: nans can be produced near boundaries)
-                    v_data = tile_v.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar, method="nearest").data
-                    v_filter_50_data = focus_filter_v50_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                  method='nearest').data
-                    v_filter_100_data = focus_filter_v100_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                    method='nearest').data
-                    v_filter_150_data = focus_filter_v150_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                    method='nearest').data
-                    v_filter_300_data = focus_filter_v300_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                    method='nearest').data
-                    v_filter_450_data = focus_filter_v450_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                    method='nearest').data
-                    v_filter_af_data = focus_filter_vfa_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                  method='nearest').data
-                    '''
-                    vx_data = tile_vx.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar, method="nearest").data
-                    vy_data = tile_vy.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar, method="nearest").data
-                    vx_filter_50_data = focus_filter_vx_50_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                     method='nearest').data
-                    vx_filter_100_data = focus_filter_vx_100_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                       method='nearest').data
-                    vx_filter_150_data = focus_filter_vx_150_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                       method='nearest').data
-                    vx_filter_300_data = focus_filter_vx_300_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                       method='nearest').data
-                    vx_filter_450_data = focus_filter_vx_450_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                       method='nearest').data
-                    vx_filter_af_data = focus_filter_vx_af_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                     method='nearest').data
-                    vy_filter_50_data = focus_filter_vy_50_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                     method='nearest').data
-                    vy_filter_100_data = focus_filter_vy_100_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                       method='nearest').data
-                    vy_filter_150_data = focus_filter_vy_150_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                       method='nearest').data
-                    vy_filter_300_data = focus_filter_vy_300_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                       method='nearest').data
-                    vy_filter_450_data = focus_filter_vy_450_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                       method='nearest').data
-                    vy_filter_af_data = focus_filter_vy_af_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar,
-                                                                     method='nearest').data
-
-                    dvx_dx_data = dvx_dx_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar, method='nearest').data
-                    dvx_dy_data = dvx_dy_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar, method='nearest').data
-                    dvy_dx_data = dvy_dx_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar, method='nearest').data
-                    dvy_dy_data = dvy_dy_ar.interp(y=northings_rgi_k_id_ar, x=eastings_rgi_k_id_ar, method='nearest').data
-                    '''
-
-                    # some checks
-                    assert v_data.shape == v_filter_50_data.shape, "NSIDC interp something wrong!"
-                    assert v_data.shape == v_filter_100_data.shape, "NSIDC interp something wrong!"
-                    assert v_data.shape == v_filter_150_data.shape, "NSIDC interp something wrong!"
-                    assert v_data.shape == v_filter_300_data.shape, "NSIDC interp something wrong!"
-                    assert v_data.shape == v_filter_450_data.shape, "NSIDC interp something wrong!"
-                    assert v_data.shape == v_filter_af_data.shape, "NSIDC interp something wrong!"
-
-
-                    # Fill dataframe with NSIDC velocities
-                    glathida.loc[indexes_rgi_k_id, 'v50'] = v_filter_50_data
-                    glathida.loc[indexes_rgi_k_id, 'v100'] = v_filter_100_data
-                    glathida.loc[indexes_rgi_k_id, 'v150'] = v_filter_150_data
-                    glathida.loc[indexes_rgi_k_id, 'v300'] = v_filter_300_data
-                    glathida.loc[indexes_rgi_k_id, 'v450'] = v_filter_450_data
-                    glathida.loc[indexes_rgi_k_id, 'vgfa'] = v_filter_af_data
-                    #glathida.loc[indexes_rgi_k_id, 'vx'] = vx_data
-                    #glathida.loc[indexes_rgi_k_id, 'vy'] = vy_data
-                    #glathida.loc[indexes_rgi_k_id, 'vx_gf50'] = vx_filter_50_data
-                    #glathida.loc[indexes_rgi_k_id, 'vx_gf100'] = vx_filter_100_data
-                    #glathida.loc[indexes_rgi_k_id, 'vx_gf150'] = vx_filter_150_data
-                    #glathida.loc[indexes_rgi_k_id, 'vx_gf300'] = vx_filter_300_data
-                    #glathida.loc[indexes_rgi_k_id, 'vx_gf450'] = vx_filter_450_data
-                    #glathida.loc[indexes_rgi_k_id, 'vx_gfa'] = vx_filter_af_data
-                    #glathida.loc[indexes_rgi_k_id, 'vy_gf50'] = vy_filter_50_data
-                    #glathida.loc[indexes_rgi_k_id, 'vy_gf100'] = vy_filter_100_data
-                    #glathida.loc[indexes_rgi_k_id, 'vy_gf150'] = vy_filter_150_data
-                    #glathida.loc[indexes_rgi_k_id, 'vy_gf300'] = vy_filter_300_data
-                    #glathida.loc[indexes_rgi_k_id, 'vy_gf450'] = vy_filter_450_data
-                    #glathida.loc[indexes_rgi_k_id, 'vy_gfa'] = vy_filter_af_data
-                    #glathida.loc[indexes_rgi_k_id, 'dvx_dx'] = dvx_dx_data
-                    #glathida.loc[indexes_rgi_k_id, 'dvx_dy'] = dvx_dy_data
-                    #glathida.loc[indexes_rgi_k_id, 'dvy_dx'] = dvy_dx_data
-                    #glathida.loc[indexes_rgi_k_id, 'dvy_dy'] = dvy_dy_data
-        """
 
         # How many nans we have produced from the interpolation
         glathida_rgi_ = glathida.loc[glathida['RGI'] == rgi]
@@ -2155,7 +1761,10 @@ def add_millan_vx_vy_ith(glathida, path_millan_velocity, path_millan_icethicknes
     return glathida
 
 """Add distance from border using glacier geometries"""
-def add_dist_from_boder_using_geometries(glathida):
+def add_dist_from_boder_using_geometries(glathida,
+                                         add_glacier_rgi=None,
+                                         add_glacier_shp_file=None,
+                                         add_glacier_intersect_shp_file=None):
     print("Adding distance to border using a geometrical approach...")
 
     if ('dist_from_border_km_geom' in list(glathida)):
@@ -2184,9 +1793,25 @@ def add_dist_from_boder_using_geometries(glathida):
         #      f"of which {glathida_rgi['RGIId'].isna().sum()} points without a glacier id (hence nan)"
         #      f"and {glathida_rgi['RGIId'].notna().sum()} points with valid glacier id")
 
-        # Get rgi products
-        rgi_products = get_rgi_products(rgi)
-        oggm_rgi_glaciers, oggm_rgi_intersects, rgi_graph, _ = rgi_products
+        # Get rgi products. If we provided a shp file for some region, add it
+        if rgi == add_glacier_rgi:
+            #peninsula_glacier_file = f"{args.antarctic_peninsula_folder}/antarctic_peninsula.shp"
+            #peninsula_intersect_file = f"{args.antarctic_peninsula_folder}/antarctic_peninsula_intersects.shp"
+
+            oggm_rgi_glaciers, rgi_graph = rgi_products = get_rgi_products(region=rgi, version='62',
+                                                                           add_glacier_shp_file = add_glacier_shp_file,
+                                                                           add_glacier_intersects_shp_file = add_glacier_intersect_shp_file)
+                                                                              #add_glacier_shp_file=peninsula_glacier_file,
+                                                                              #add_glacier_intersects_shp_file=peninsula_intersect_file)
+            print(f"Distance function: added {add_glacier_shp_file} file to rgi {add_glacier_rgi}.")
+
+        else:
+            oggm_rgi_glaciers, rgi_graph = rgi_products = get_rgi_products(region=rgi, version='62',
+                                                                              add_glacier_shp_file=None,
+                                                                              add_glacier_intersects_shp_file=None)
+
+        # add the regional features to glacier dataframe. In this method it is useful to get the cluster area
+        oggm_rgi_glaciers = add_regional_features(oggm_rgi_glaciers)
 
         # loop over glaciers
         # Note: It is important to note that since rgi_ids do not contain nans, looping over it automatically
@@ -2213,53 +1838,45 @@ def add_dist_from_boder_using_geometries(glathida):
             glacier_cenLon, glacier_cenLat = glacier_centroid.x, glacier_centroid.y
             _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(glacier_cenLat, glacier_cenLon)
 
-            # intersects of glacier (need only for plotting purposes)
-            gl_intersects = oggm.utils.get_rgi_intersects_entities([rgi_id], version='62')
-
             # Calculate intersects of all glaciers in the cluster
             list_cluster_RGIIds = find_cluster_with_graph(rgi_graph, rgi_id, max_depth=config.graph_max_layer_depth)
             no_glaciers_in_cluster = len(list_cluster_RGIIds)
             #print(f"Cluster: {no_glaciers_in_cluster} glaciers.")
             #print(f"List of glacier cluster: {list_cluster_RGIIds}")
 
-            if list_cluster_RGIIds is not None:
-                # (need only for plotting purposes)
-                cluster_intersects = oggm.utils.get_rgi_intersects_entities(list_cluster_RGIIds, version='62')
-            else: cluster_intersects = None
-
             # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks) and convert to UTM
             cluster_geometry_list = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'].isin(list_cluster_RGIIds), 'geometry'].tolist()
+
+            # Calculate cluster area
+            area_cluster = oggm_rgi_glaciers.loc[oggm_rgi_glaciers['RGIId'].isin(list_cluster_RGIIds), 'area'].sum()
+
             cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
-            #todo: add a buffer, like this
-            # cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.buffer(0.001).union_all(method='unary'), crs="EPSG:4326")
+            #todo: add a buffer, like this. This would help mergin geometries defined slighly wrong.
+            # cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.buffer(0.0004).union_all(method='unary'), crs="EPSG:4326")
             cluster_geometry_no_divides_4326 = gpd.GeoSeries(cluster_geometry_4326.union_all(method='unary'),
                                                              crs="EPSG:4326")
             cluster_geometry_no_divides_epsg = cluster_geometry_no_divides_4326.to_crs(epsg=glacier_epsg)
 
-            #todo: probably if-elif can be eliminated. check fetch_metadata
-            if cluster_geometry_no_divides_epsg.item().geom_type == 'Polygon':
-                cluster_exterior_ring = [cluster_geometry_no_divides_epsg.item().exterior]
-                cluster_interior_rings = list(cluster_geometry_no_divides_epsg.item().interiors)
-                multipolygon = False
-            elif cluster_geometry_no_divides_epsg.item().geom_type == 'MultiPolygon':
-                polygons = list(cluster_geometry_no_divides_epsg.item().geoms)
-                cluster_exterior_ring = [polygon.exterior for polygon in polygons]
-                num_multipoly = len(cluster_exterior_ring)
-                cluster_interior_ringSequences = [polygon.interiors for polygon in polygons]
-                cluster_interior_rings = [ring for sequence in cluster_interior_ringSequences for ring in sequence]
-                multipolygon = True
-            else:
-                raise ValueError("Unexpected geometry type. Please check.")
+            # Ensure the geometry is a valid MultiPolygon (it will automatically handle both Polygon and MultiPolygon)
+            geometries = list(
+                cluster_geometry_no_divides_epsg.item().geoms) if cluster_geometry_no_divides_epsg.item().geom_type == 'MultiPolygon' \
+                else [cluster_geometry_no_divides_epsg.item()]
+
+            # Create exterior and interior rings, regardless of whether it's a single Polygon or a MultiPolygon
+            cluster_exterior_ring = [polygon.exterior for polygon in geometries]  # List of LinearRing objects
+            cluster_interior_rings = [ring for polygon in geometries for ring in
+                                      polygon.interiors]  # List of all interior rings
 
             geoseries_geometries_epsg = gpd.GeoSeries(cluster_exterior_ring + cluster_interior_rings, crs=glacier_epsg)
             no_geometries_in_cluster = len(geoseries_geometries_epsg)
             #print(f"Cluster: {no_geometries_in_cluster} geometries.")
 
             # Calculate the area of the cluster in km2
-            cluster_exterior_ring_gpd = gpd.GeoSeries([cluster_exterior_ring[0]], crs=glacier_epsg).to_crs("EPSG:4326")
-            area_cluster, perimeter_cluster = Geod(ellps="WGS84").geometry_area_perimeter(cluster_exterior_ring_gpd.iloc[0])
-            area_cluster = abs(area_cluster) * 1e-6  # km^2
-            #print(rgi_id, area_cluster)
+            #cluster_exterior_ring_gpd = gpd.GeoSeries([cluster_exterior_ring[0]], crs=glacier_epsg).to_crs("EPSG:4326")
+            #area_cluster_old, perimeter_cluster = Geod(ellps="WGS84").geometry_area_perimeter(cluster_exterior_ring_gpd.iloc[0])
+            #area_cluster_old = abs(area_cluster_old) * 1e-6  # km^2
+            #print(rgi_id, area_cluster, area_cluster_old)
+
 
             # Get all points and create Geopandas geoseries and convert to glacier center UTM
             # Note: a delicate issue is that technically each point may have its own UTM zone.
@@ -2288,7 +1905,12 @@ def add_dist_from_boder_using_geometries(glathida):
                     # In rgi 5 and 19 given that we have an ice sheet we remove cluster external geometry from calculation
                     # geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg[1:].geometry])
                 #else:
-                geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
+                if geoseries_geometries_epsg.has_z.any():
+                    # Remove the third dimension by using .xy and transposing the result
+                    geoms_coords_array = np.concatenate([np.array(geom.xy).T for geom in geoseries_geometries_epsg.geometry])
+                else:
+                    # Use the regular method for 2D geometries
+                    geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
 
                 # 2. instantiate kdtree
                 kdtree = KDTree(geoms_coords_array)
@@ -2360,6 +1982,8 @@ def add_dist_from_boder_using_geometries(glathida):
 
                         # Perform nearest neighbor search for each point and calculate minimum distances
                         # both distances and indices have shape (1, len(geoseries_geometries_epsg))
+
+                        #print(geoms_coords_array.shape, point_array.shape)
                         distances, indices = kdtree.query(point_array, k=len(geoseries_geometries_epsg))
                         min_dist_KDTree = distances[0,0] # np.min(distances, axis=1)) or equivalently distances[:,0]
                         closest_point_index = indices[0, 0]
@@ -2408,9 +2032,20 @@ def add_dist_from_boder_using_geometries(glathida):
                             gl_neighbor_geom = gl_neighbor_df['geometry'].item()  # glacier geometry Polygon
                             ax1.plot(*gl_neighbor_geom.exterior.xy, lw=1, c='orange', zorder=0)
 
+                    # intersects of glacier (need only for plotting purposes)
+                    # Note this only works if rgi_id is in RGI, not a custom id
+                    gl_intersects = oggm.utils.get_rgi_intersects_entities([rgi_id], version='62')
+
                     # Plot intersections of central glacier with its neighbors
                     for k, intersect in enumerate(gl_intersects['geometry']):  # Linestring gl_intersects
                         ax1.plot(*intersect.xy, lw=1, color='k')
+
+                    if list_cluster_RGIIds is not None:
+                        # (need only for plotting purposes)
+                        # Note this only works if rgi_id is in RGI, not a custom id
+                        cluster_intersects = oggm.utils.get_rgi_intersects_entities(list_cluster_RGIIds, version='62')
+                    else:
+                        cluster_intersects = None
 
                     # Plot intersections of all glaciers in the cluster
                     if cluster_intersects is not None:
@@ -2493,7 +2128,6 @@ def add_dist_from_water(glathida, path_GSHHG_folder):
     glathida['dist_from_ocean'] = [np.nan] * len(glathida)
 
     regions = list(range(1, 20))
-    #regions = [19,]
 
     # loop over regions
     for rgi in tqdm(regions, total=len(regions), desc='Distances from ocean in RGI', leave=True):
@@ -2567,12 +2201,12 @@ def add_dist_from_water(glathida, path_GSHHG_folder):
     return glathida
 
 """Add RGIId and other OGGM stats like glacier area"""
-def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
+def add_RGIId_and_OGGM_stats(glathida, add_glacier_rgi=None, add_glacier_shp_file=None):
     # Note: points that are outside any glaciers will have nan to RGIId (and the other features)
 
     print("Adding OGGM's stats method and Hugonnet dmdtda")
-    if (any(ele in list(glathida) for ele in ['RGIId', 'Area'])):
-        print('Variables RGIId/Area etc already in dataframe.')
+    if (any(ele in list(glathida) for ele in ['RGIId', 'zmin'])):
+        print('Variables RGIId/zmin etc already in dataframe.')
         return glathida
 
     glathida['RGIId'] = [np.nan] * len(glathida)
@@ -2580,14 +2214,14 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
     glathida['Area'] = [np.nan] * len(glathida)
     glathida['Area_icefree'] = [np.nan] * len(glathida)
     glathida['Perimeter'] = [np.nan] * len(glathida)
-    glathida['Zmin'] = [np.nan] * len(glathida) # -999 are bad values
-    glathida['Zmax'] = [np.nan] * len(glathida) # -999 are bad values
-    glathida['Zmed'] = [np.nan] * len(glathida) # -999 are bad values
-    glathida['Slope'] = [np.nan] * len(glathida)
-    glathida['Lmax'] = [np.nan] * len(glathida) # -9 missing values, see https://essd.copernicus.org/articles/14/3889/2022/essd-14-3889-2022.pdf
-    glathida['Form'] = [np.nan] * len(glathida) # 9 Not assigned
-    glathida['TermType'] = [np.nan] * len(glathida) # 9 Not assigned
-    glathida['Aspect'] = [np.nan] * len(glathida) # -9 bad values
+    #glathida['Zmin'] = [np.nan] * len(glathida) # -999 are bad values
+    #glathida['Zmax'] = [np.nan] * len(glathida) # -999 are bad values
+    #glathida['Zmed'] = [np.nan] * len(glathida) # -999 are bad values
+    #glathida['Slope'] = [np.nan] * len(glathida)
+    #glathida['Lmax'] = [np.nan] * len(glathida) # -9 missing values, see https://essd.copernicus.org/articles/14/3889/2022/essd-14-3889-2022.pdf
+    #glathida['Form'] = [np.nan] * len(glathida) # 9 Not assigned
+    #glathida['TermType'] = [np.nan] * len(glathida) # 9 Not assigned
+    #glathida['Aspect'] = [np.nan] * len(glathida) # -9 bad values
     glathida['dmdtda_hugo'] = [np.nan] * len(glathida)
 
     glathida['zmin'] = [np.nan] * len(glathida) # new
@@ -2606,12 +2240,21 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
     mbdf = utils.get_geodetic_mb_dataframe()
     mbdf = mbdf.loc[mbdf['period'] == '2000-01-01_2020-01-01']
 
-    regions = list(range(1, 20))#[1,2,3,4,6,7,8,9,10,11,12,13,14,15,16,17,18]#[1,3,4,7,8,11,18]
+    regions = list(range(1, 20))
 
     for rgi in regions:
         # get OGGM's dataframe of rgi glaciers
-        oggm_rgi_shp = glob(f'{path_OGGM_folder}/rgi/RGIV62/{rgi:02d}*/{rgi:02d}*.shp')[0]
+        oggm_rgi_shp = utils.get_rgi_region_file(f"{rgi:02d}", version='62')
         oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
+
+        # Add custom glaciers defined in the input .shp
+        if rgi == add_glacier_rgi:
+            #peninsula_glaciers = gpd.read_file(f"{args.antarctic_peninsula_folder}/antarctic_peninsula.shp", engine='pyogrio')
+            #oggm_rgi_glaciers = pd.concat([oggm_rgi_glaciers, peninsula_glaciers], ignore_index=True)
+            added_glaciers = gpd.read_file(f"{args.add_glacier_shp_file}", engine='pyogrio')
+            oggm_rgi_glaciers = pd.concat([oggm_rgi_glaciers, added_glaciers], ignore_index=True)
+            print(f"Added the custom geometries: {args.add_glacier_shp_file}")
+        #print(rgi, add_glacier_rgi, add_glacier_shp_file, len(oggm_rgi_glaciers))
 
         # get Hugonnet dmdtda of rgi glaciers
         mbdf_rgi = mbdf.loc[mbdf['reg'] == rgi]
@@ -2623,21 +2266,21 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
             print(f"rgi {rgi} there are no points. We go to next region")
             continue
 
-        # loop sui ghiacciai di oggm
+        # loop on glaciers
         for i, ind in tqdm(enumerate(oggm_rgi_glaciers.index), total=len(oggm_rgi_glaciers), desc=f"glaciers in rgi {rgi}", leave=True, position=0):
 
             # Oggm variables
             glacier_geometry = oggm_rgi_glaciers.at[ind, 'geometry']
             glacier_RGIId = oggm_rgi_glaciers.at[ind, 'RGIId']
             #glacier_area = oggm_rgi_glaciers.at[ind, 'Area']
-            glacier_zmin = oggm_rgi_glaciers.at[ind, 'Zmin']
-            glacier_zmax = oggm_rgi_glaciers.at[ind, 'Zmax']
-            glacier_zmed = oggm_rgi_glaciers.at[ind, 'Zmed']
-            glacier_slope = oggm_rgi_glaciers.at[ind, 'Slope']
-            glacier_lmax = oggm_rgi_glaciers.at[ind, 'Lmax']
-            glacier_form = oggm_rgi_glaciers.at[ind, 'Form'] # this can be dropped as I don't use it in the model
-            glacier_termtype = oggm_rgi_glaciers.at[ind, 'TermType']
-            glacier_aspect = oggm_rgi_glaciers.at[ind, 'Aspect']
+            #glacier_zmin = oggm_rgi_glaciers.at[ind, 'Zmin']
+            #glacier_zmax = oggm_rgi_glaciers.at[ind, 'Zmax']
+            #glacier_zmed = oggm_rgi_glaciers.at[ind, 'Zmed']
+            #glacier_slope = oggm_rgi_glaciers.at[ind, 'Slope']
+            #glacier_lmax = oggm_rgi_glaciers.at[ind, 'Lmax']
+            #glacier_form = oggm_rgi_glaciers.at[ind, 'Form'] # this can be dropped as I don't use it in the model
+            #glacier_termtype = oggm_rgi_glaciers.at[ind, 'TermType']
+            #glacier_aspect = oggm_rgi_glaciers.at[ind, 'Aspect']
             #glacier_cenLon = oggm_rgi_glaciers.at[ind, 'CenLon']
             #glacier_cenLat = oggm_rgi_glaciers.at[ind, 'CenLat']
 
@@ -2711,11 +2354,14 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
             dem_glacier_with_buffer = dem_glacier_with_buffer.squeeze()
             dem_glacier = dem_glacier_with_buffer.rio.clip([glacier_geometry], "EPSG:4326", drop=True, invert=False, all_touched=True)
 
+            #todo: the dem may contain artifacts. These impact zmin very much. Instead of taking the absolute nanmin,
+            # a possibility is to take zmin as the 1st percentile of the hist(dem_glacier.values).
             glacier_zmin_with_dem = np.nanmin(dem_glacier.values)
             glacier_zmax_with_dem = np.nanmax(dem_glacier.values)
             glacier_zmed_with_dem = np.nanmedian(dem_glacier.values)
 
             # These two glaciers contain weird Tandem-X low elevation patches. Hardcode minimum vals.
+            #todo: the above trick would possibly fix the following hard-coded below.
             if glacier_RGIId == 'RGI60-05.00800':
                 glacier_zmin_with_dem = 34.0
             if glacier_RGIId == 'RGI60-05.04288':
@@ -2762,7 +2408,7 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
 
             ifplot = False
             if ifplot:
-                print(glacier_RGIId, glacier_cenLon, glacier_cenLat, glacier_lmax_with_convex_hull, glacier_lmax)
+                print(glacier_RGIId, glacier_cenLon, glacier_cenLat, glacier_lmax_with_convex_hull)
                 lats_in_glacier = df_poins_in_glacier['POINT_LAT']
                 lons_in_glacier = df_poins_in_glacier['POINT_LON']
                 fig, ax1 = plt.subplots()
@@ -2773,29 +2419,35 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
                 plt.show()
 
             # some checks before returning values to dataframe
-            assert glacier_zmin != -999, "Zmin should not be -999"
-            assert glacier_zmax != -999, "Zmax should not be -999"
+            #assert glacier_zmin != -999, "Zmin should not be -999"
+            #assert glacier_zmax != -999, "Zmax should not be -999"
             #assert glacier_zmed != -999, "Zmed should not be -999"
             #assert glacier_lmax != -9, "Lmax should not be -9"
-            assert glacier_form != 9, "Form should not be 9 (not assigned)"
-            assert glacier_termtype != 9, "TermType should not be 9 (not assigned)"
+            #assert glacier_form != 9, "Form should not be 9 (not assigned)"
+            #assert glacier_termtype != 9, "TermType should not be 9 (not assigned)"
             #assert glacier_aspect != -9, "Aspect should not be -9"
 
             # Data imputation for glacier_lmax (found needed 6 times in rgi 19)
-            if glacier_lmax == -9:
-                glacier_lmax = lmax_imputer(gl_geom_ext_gdf, glacier_epsg)
+            #if glacier_lmax == -9:
+                #glacier_lmax = lmax_imputer(gl_geom_ext_gdf, glacier_epsg)
                 #print(glacier_RGIId, glacier_cenLat, glacier_cenLon, glacier_lmax)
 
             # Data imputation for zmed (found needed for Antarctica, rgi 19)
-            if glacier_zmed == -999:
-                glacier_zmed = 0.5*(glacier_zmin+glacier_zmax)
+            #if glacier_zmed == -999:
+            #    glacier_zmed = 0.5*(glacier_zmin+glacier_zmax)
 
             # Data imputation for aspect (found needed for Greenland)
-            if glacier_aspect == -9: glacier_aspect = 0
+            #if glacier_aspect == -9: glacier_aspect = 0
 
-            assert not np.any(np.isnan(np.array([glacier_area, glacier_zmin, glacier_zmax,
-                                                     glacier_zmed, glacier_slope, glacier_lmax,
-                                                 glacier_form, glacier_termtype, glacier_aspect,
+            #assert not np.any(np.isnan(np.array([glacier_area, glacier_zmin, glacier_zmax,
+            #                                         glacier_zmed, glacier_slope, glacier_lmax,
+            #                                     glacier_form, glacier_termtype, glacier_aspect,
+            #                                     glacier_zmin_with_dem, glacier_zmax_with_dem, glacier_zmed_with_dem,
+            #                                     glacier_mean_slope_with_dem, glacier_mean_aspect_with_dem,
+            #                                     glacier_mean_curvature_with_dem, glacier_lmax_with_convex_hull]))), \
+            #    "Found nan in some variables in method add_RGIId_and_OGGM_stats. Check why this value appeared."
+
+            assert not np.any(np.isnan(np.array([glacier_area, area_noice, perimeter_ice, glacier_dmdtda,
                                                  glacier_zmin_with_dem, glacier_zmax_with_dem, glacier_zmed_with_dem,
                                                  glacier_mean_slope_with_dem, glacier_mean_aspect_with_dem,
                                                  glacier_mean_curvature_with_dem, glacier_lmax_with_convex_hull]))), \
@@ -2806,17 +2458,15 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
             glathida.loc[df_poins_in_glacier.index, 'Area'] = glacier_area
             glathida.loc[df_poins_in_glacier.index, 'Area_icefree'] = area_noice
             glathida.loc[df_poins_in_glacier.index, 'Perimeter'] = perimeter_ice
-            glathida.loc[df_poins_in_glacier.index, 'Zmin'] = glacier_zmin
-            glathida.loc[df_poins_in_glacier.index, 'Zmax'] = glacier_zmax
-            glathida.loc[df_poins_in_glacier.index, 'Zmed'] = glacier_zmed
-            glathida.loc[df_poins_in_glacier.index, 'Slope'] = glacier_slope
-            glathida.loc[df_poins_in_glacier.index, 'Lmax'] = glacier_lmax
-            glathida.loc[df_poins_in_glacier.index, 'Form'] = glacier_form
-            glathida.loc[df_poins_in_glacier.index, 'TermType'] = glacier_termtype
-            glathida.loc[df_poins_in_glacier.index, 'Aspect'] = glacier_aspect
+            #glathida.loc[df_poins_in_glacier.index, 'Zmin'] = glacier_zmin
+            #glathida.loc[df_poins_in_glacier.index, 'Zmax'] = glacier_zmax
+            #glathida.loc[df_poins_in_glacier.index, 'Zmed'] = glacier_zmed
+            #glathida.loc[df_poins_in_glacier.index, 'Slope'] = glacier_slope
+            #glathida.loc[df_poins_in_glacier.index, 'Lmax'] = glacier_lmax
+            #glathida.loc[df_poins_in_glacier.index, 'Form'] = glacier_form
+            #glathida.loc[df_poins_in_glacier.index, 'TermType'] = glacier_termtype
+            #glathida.loc[df_poins_in_glacier.index, 'Aspect'] = glacier_aspect
             glathida.loc[df_poins_in_glacier.index, 'dmdtda_hugo'] = glacier_dmdtda
-
-            # new feats
             glathida.loc[df_poins_in_glacier.index, 'zmin'] = glacier_zmin_with_dem
             glathida.loc[df_poins_in_glacier.index, 'zmax'] = glacier_zmax_with_dem
             glathida.loc[df_poins_in_glacier.index, 'zmed'] = glacier_zmed_with_dem
@@ -2825,19 +2475,14 @@ def add_RGIId_and_OGGM_stats(glathida, path_OGGM_folder):
             glathida.loc[df_poins_in_glacier.index, 'curvature'] = glacier_mean_curvature_with_dem
             glathida.loc[df_poins_in_glacier.index, 'lmax'] = glacier_lmax_with_convex_hull
 
-        #fig, (ax1, ax2, ax3) = plt.subplots(1,3)
-        #ax1.scatter(x=glathida['Zmin'], y=glathida['zmin'], s=5)
-        #ax1.scatter(x=glathida['Zmax'], y=glathida['zmax'], s=5)
-        #ax1.scatter(x=glathida['Zmed'], y=glathida['zmed'], s=5)
-        #ax2.scatter(x=glathida['Slope'], y=glathida['slope'], s=5)
-        #ax3.scatter(x=glathida['Lmax'], y=glathida['lmax'], s=5)
-        #plt.show()
 
     return glathida
 
 """Add Farinotti's ith"""
 def add_farinotti_ith(glathida, path_farinotti_icethickness):
     print("Adding Farinotti ice thickness...")
+    #todo: this can be possibly improved/simplified. I have RGIId. Instead of looping over Farinotti files, I can directly loop
+    # over glathida['RGIId'], get lats lons of measurements, open Farinotti's file, reproject lats lons and interpolate it.
 
     if ('ith_f' in list(glathida)):
         print('Variable already in dataframe.')
@@ -2855,7 +2500,7 @@ def add_farinotti_ith(glathida, path_farinotti_icethickness):
             continue
 
         # get dataframe of rgi glaciers from oggm
-        oggm_rgi_shp = glob(f"{args.oggm}rgi/RGIV62/{rgi:02d}*/{rgi:02d}*.shp")[0]
+        oggm_rgi_shp = utils.get_rgi_region_file(f"{rgi:02d}", version='62')
         oggm_rgi_glaciers = gpd.read_file(oggm_rgi_shp, engine='pyogrio')
         oggm_rgi_glaciers_geoms = oggm_rgi_glaciers['geometry']
         tqdm.write(f"rgi: {rgi}. Imported OGGMs {oggm_rgi_shp} dataframe of {len(oggm_rgi_glaciers_geoms)} glaciers")
@@ -3030,46 +2675,58 @@ if __name__ == '__main__':
     # Create icebridge training data
     prepare_icebridge = False
     if prepare_icebridge:
+        #icebridge = pd.read_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet')
         #icebridge = pd.read_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_for_iceboost.parquet')
         #icebridge = add_rgi(icebridge, args.path_O1Regions_shp)
-        #icebridge = add_RGIId_and_OGGM_stats(icebridge, args.OGGM_folder)
-        #icebridge.to_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet',
-        #                     index=False)
-        icebridge = pd.read_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet')
-        icebridge = add_slopes_elevation(icebridge, args.mosaic)
+        #icebridge = add_slopes_elevation(icebridge, args.mosaic)
         #icebridge = add_smb(icebridge, args.RACMO_folder)
-        icebridge = add_millan_vx_vy_ith(icebridge, args.millan_velocity_folder, args.millan_icethickness_folder)
+        #icebridge = add_millan_vx_vy_ith(icebridge, args.millan_velocity_folder, args.millan_icethickness_folder)
         #icebridge = add_dist_from_boder_using_geometries(icebridge)
         #icebridge = add_dist_from_water(icebridge, args.GSHHG_folder)
         #icebridge = add_farinotti_ith(icebridge, args.farinotti_icethickness_folder)
         #icebridge = add_t2m(icebridge, args.path_ERA5_t2m_folder)
-        icebridge.to_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet', index=False)
+        #icebridge.to_parquet('/media/maffe/nvme/IceBridge_MCoRDS_L2_Ice_Thickness_v1/icebridge_train_iceboost.parquet', index=False)
         exit('ADDIO')
 
-    #glathida = pd.read_csv(args.path_ttt_csv, low_memory=False)
-    #glathida = add_rgi(glathida, args.path_O1Regions_shp)
-    #glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
-    #glathida.to_csv("/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata_rgi_oggm.csv", index=False)
-    #glathida = add_slopes_elevation(glathida, args.mosaic)
-    #glathida = add_smb(glathida, args.RACMO_folder)
-    #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
-    #glathida = add_dist_from_boder_using_geometries(glathida)
-    #glathida = add_dist_from_water(glathida, args.GSHHG_folder)
-    #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
-    #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
+    # Create polar training data
+    prepare_polar = True
+    if prepare_polar:
+        polar = pd.read_parquet('/media/maffe/nvme/polar_ice_thickness_data/polar_ice_thick_train_iceboost.parquet')
+        #polar = pd.read_parquet('/media/maffe/nvme/polar_ice_thickness_data/polar_ice_thick_for_iceboost.parquet')
+        #polar = add_rgi(polar, args.path_O1Regions_shp)
+        #polar = add_RGIId_and_OGGM_stats(polar, add_glacier_rgi=19, add_glacier_shp_file=args.add_glacier_shp_file)
+        #polar = add_slopes_elevation(polar, args.mosaic)
+        #polar = add_smb(polar, args.RACMO_folder)
+        #polar = add_millan_vx_vy_ith(polar, args.millan_velocity_folder, args.millan_icethickness_folder)
+        polar = add_dist_from_boder_using_geometries(polar, add_glacier_rgi=19,
+                                                        add_glacier_shp_file=args.add_glacier_shp_file,
+                                                        add_glacier_intersect_shp_file=args.add_glacier_intersect_shp_file)
 
-    # testing
-    glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'metadata37.csv'), low_memory=False)
-    #glathida = add_dist_from_water(glathida, args.GSHHG_folder)
-    #glathida = add_smb(glathida, args.RACMO_folder)
-    #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
-    #glathida = add_RGIId_and_OGGM_stats(glathida, args.OGGM_folder)
-    #glathida = add_dist_from_boder_using_geometries(glathida)
-    glathida = add_slopes_elevation(glathida, args.mosaic)
-    glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
-    #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
+        #polar = add_dist_from_water(polar, args.GSHHG_folder)
+        #polar = add_farinotti_ith(polar, args.farinotti_icethickness_folder)
+        #polar = add_t2m(polar, args.path_ERA5_t2m_folder)
+        polar.to_parquet('/media/maffe/nvme/polar_ice_thickness_data/polar_ice_thick_train_iceboost2.parquet', index=False)
 
-    if args.save:
-        glathida.to_csv(f'{args.save_outname}.csv', index=False)
-        print(f"Metadata dataset saved: {args.save_outname}")
-    print(f'Finished in {(time.time()-t0)/60} minutes. Bye bye.')
+    prepare_glathida = False
+    if prepare_glathida:
+        #glathida = pd.read_csv(args.path_ttt_csv, low_memory=False)
+        glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'glathida40.csv'), low_memory=False)
+        #glathida = add_rgi(glathida, args.path_O1Regions_shp)
+        #glathida = add_RGIId_and_OGGM_stats(glathida, add_glacier_rgi=None, add_glacier_shp_file=None)
+        #glathida.to_csv("/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata_rgi_oggm.csv", index=False)
+        #glathida = add_slopes_elevation(glathida, args.mosaic)
+        #glathida = add_smb(glathida, args.RACMO_folder)
+        #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
+        #glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'glathida38.csv'), low_memory=False)
+        glathida = add_dist_from_boder_using_geometries(glathida,
+                                                        add_glacier_rgi=19,
+                                                        add_glacier_shp_file=args.add_glacier_shp_file,
+                                                        add_glacier_intersect_shp_file=args.add_glacier_intersect_shp_file)
+        #glathida = add_dist_from_water(glathida, args.GSHHG_folder)
+        #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
+        #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
+
+        if args.save:
+            glathida.to_csv(f'{args.save_outname}.csv', index=False)
+            print(f"Metadata dataset saved: {args.save_outname}.csv")
+        print(f'Finished in {(time.time()-t0)/60} minutes. Bye bye.')
