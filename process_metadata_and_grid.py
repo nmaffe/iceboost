@@ -30,9 +30,9 @@ args = parser.parse_args()
 
 # Input datasets
 GLATHIDA_FOLDER = "/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/"
-GLATHIDA_FILE = "glathida40.csv"
+GLATHIDA_FILE = "glathida41.csv"
 POLAR_FOLDER = "/media/maffe/nvme/polar_ice_thickness_data/"
-POLAR_FILE = "polar_ice_thick_train_iceboost.parquet"
+POLAR_FILE = "polar_ice_thick_train_iceboost2.parquet"
 
 # save options
 OUT_SAVE_FOLDER = "/media/maffe/nvme/iceboost_train_dataset"
