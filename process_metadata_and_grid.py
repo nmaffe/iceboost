@@ -30,9 +30,9 @@ args = parser.parse_args()
 
 # Input datasets
 GLATHIDA_FOLDER = "/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/"
-GLATHIDA_FILE = "glathida41.csv"
+GLATHIDA_FILE = "glathida42.csv"
 POLAR_FOLDER = "/media/maffe/nvme/polar_ice_thickness_data/"
-POLAR_FILE = "polar_ice_thick_train_iceboost2.parquet"
+POLAR_FILE = "polar_ice_thick_train_iceboost3.parquet"
 
 # save options
 OUT_SAVE_FOLDER = "/media/maffe/nvme/iceboost_train_dataset"
@@ -47,36 +47,110 @@ glathida['THICKNESS'] = glathida['THICKNESS'].astype(float)
 
 # This glacier has a factor 10 too much.
 glathida.loc[glathida['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
+
+# Remove glaciers containing bad data (id, min, max)
+bad_data_to_remove = [
+    ('RGI60-03.02756', 1, np.nan),
+    ('RGI60-04.05541', 7, np.nan),
+    ('RGI60-04.05595', 15, np.nan),
+    ('RGI60-05.00808', np.nan, 300),
+    ('RGI60-05.00814', np.nan, 300),
+    ('RGI60-05.01906', np.nan, 200),
+    ('RGI60-05.02244', np.nan, 200),
+    ('RGI60-05.03731', np.nan, np.nan),
+    ('RGI60-05.04255', 6, np.nan),
+    ('RGI60-05.04276', np.nan, 50),
+    ('RGI60-05.04288', np.nan, np.nan),
+    ('RGI60-05.04304', np.nan, np.nan),
+    ('RGI60-05.04309', np.nan, np.nan),
+    ('RGI60-05.04339', np.nan, np.nan),
+    ('RGI60-05.04786', np.nan, np.nan),
+    ('RGI60-05.04959', np.nan, np.nan),
+    ('RGI60-05.05000', np.nan, np.nan),
+    ('RGI60-05.05191', 1, np.nan),
+    ('RGI60-05.05412', np.nan, np.nan),
+    ('RGI60-05.07490', np.nan, np.nan),
+    ('RGI60-05.07542', 3, np.nan),
+    ('RGI60-05.07545', 6, np.nan),
+    ('RGI60-05.12322', np.nan, np.nan),
+    ('RGI60-05.12325', np.nan, np.nan),
+    ('RGI60-05.12532', np.nan, np.nan),
+    ('RGI60-05.12761', np.nan, np.nan),
+    ('RGI60-05.12783', np.nan, np.nan),
+    ('RGI60-05.13058', np.nan, np.nan),
+    ('RGI60-05.13564', 5, np.nan),
+    ('RGI60-05.13612', np.nan, np.nan),
+    ('RGI60-05.13651', np.nan, np.nan),
+    ('RGI60-05.13693', np.nan, np.nan),
+    ('RGI60-05.13713', np.nan, np.nan),
+    ('RGI60-05.13722', 4, np.nan),
+    ('RGI60-05.13756', np.nan, np.nan),
+    ('RGI60-05.13785', 1, np.nan),
+    ('RGI60-05.13961', 33, np.nan),
+    ('RGI60-05.13983', 16, np.nan),
+    ('RGI60-05.14147', 150, np.nan),
+    ('RGI60-05.14783', np.nan, 50),
+    ('RGI60-05.14816', np.nan, np.nan),
+    ('RGI60-11.02739', np.nan, np.nan),
+    ('RGI60-19.00137', 50, np.nan),
+    ('RGI60-19.00139', 7, np.nan),
+    ('RGI60-19.00396', 5, np.nan),
+    ('RGI60-19.00416', 5, np.nan),
+    ('RGI60-19.00422', np.nan, 400),
+    ('RGI60-19.00459', np.nan, np.nan),
+    ('RGI60-19.00461', np.nan, np.nan),
+    ('RGI60-19.00474', np.nan, np.nan),
+    ('RGI60-19.00492', np.nan, np.nan),
+    ('RGI60-19.00501', 1, np.nan),
+    ('RGI60-19.01172', np.nan, np.nan),
+    ('RGI60-19.01294', np.nan, 600),
+]
+bad_data_to_remove_df = pd.DataFrame(bad_data_to_remove, columns=['ID', 'THICK_min', 'THICK_max'])
+
+# Remove old data and apply minimum ice thickness
 cond = ((glathida['SURVEY_DATE'] > args.tmin) & (glathida['DATA_FLAG'].isna()) & (glathida['THICKNESS']>=args.hmin))
 glathida = glathida[cond]
-
-# todo: check if glathida contains junk values for glacier RGI60-19.00422 (very high thickness seems).
-#glathida_junk = glathida.loc[glathida['RGIId'] == 'RGI60-19.00422']
-#print(glathida_junk['THICKNESS'].describe())
-unique_rgiid_glathida = glathida['RGIId'].unique()
+print(f"Glathida after some constraints: {len(glathida)}")
 
 """Import polar and calculate the extra glaciers to add"""
 """ Note that this is a very important policy. I am deciding to only consider those ids that are not 
 present in GlaThiDa. Another option would be to contemplate all measurements in both datasets. """
+unique_rgiid_glathida = glathida['RGIId'].unique()
 polar = pd.read_parquet(f"{POLAR_FOLDER}{POLAR_FILE}")
 polar_extra = polar[~polar['RGIId'].isin(unique_rgiid_glathida)]
 cond = ((polar_extra['THICKNESS']>=args.hmin))
 polar_extra = polar_extra[cond]
 unique_rgiid_polar_extra = polar_extra['RGIId'].unique()
+print(f"Polar data: {len(polar_extra)}")
 
 # Concatenate glathida with icebridge
 glathida = pd.concat([glathida, polar_extra], axis=0, ignore_index=True)
+print(f"Glathida + Polar data: {len(glathida)}")
+
+# Now based on manual visual investigations, we have identified the following data to remove
+# Merge datasets
+glathida = glathida.merge(bad_data_to_remove_df,
+                          left_on='RGIId',
+                          right_on='ID',
+                          how='left')
+# Remove from glathida the bad data
+glathida = glathida[
+    ~(
+        glathida['ID'].notna() & (
+            (glathida['THICK_min'].notna() & (glathida['THICKNESS'] < glathida['THICK_min'])) |
+            (glathida['THICK_max'].notna() & (glathida['THICKNESS'] > glathida['THICK_max'])) |
+            (glathida['THICK_min'].isna() & glathida['THICK_max'].isna())  # Remove all rows with this ID
+        )
+    )
+]
+glathida.drop(['ID', 'THICK_min', 'THICK_max'], axis=1, inplace=True)
+print(f"After glathida merged with Polar data and after removing bad data: {len(glathida)}")
+
+# Now we again apply minimum (it should not be necessary)
 cond = ((glathida['THICKNESS']>=args.hmin))
 glathida = glathida[cond]
 print(f"Unique ids: {len(glathida['RGIId'].unique())}")
 
-#for n, rgiid in enumerate(unique_rgiid_polar_extra):
-#    print(n, len(unique_rgiid_polar_extra), rgiid)
-#    glathida_x = glathida.loc[glathida['RGIId'] == rgiid]
-#    fig, ax = plt.subplots()
-#    s = ax.scatter(x=glathida_x['POINT_LON'], y=glathida_x['POINT_LAT'], c=glathida_x['THICKNESS'])
-#    cb = plt.colorbar(s)
-#    plt.show()
 
 # A.2 Keep only these columns
 cols_not_used = ['Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'Form', 'Aspect', 'TermType',]
