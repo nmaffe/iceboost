@@ -358,9 +358,16 @@ for n, rgiid in tqdm(enumerate(rgi_ids), total=len(rgi_ids), desc=f"Glacier", le
     list_num_measurements_after_grid.append(len(glathida_id_grid))
 
 
+# Create dataframe
+glathida_gridded = pd.concat(gridded_data_list, ignore_index=True)
+
+# Add these features
+glathida_gridded['elevation_from_zmin'] = glathida_gridded['elevation'] - glathida_gridded['zmin']
+glathida_gridded['deltaz'] = glathida_gridded['zmax'] - glathida_gridded['zmin']
+
 # Remove all nans from all features except for ith_m and ith_f
-glathida_gridded = pd.concat(gridded_data_list, ignore_index=True).dropna(subset=cols_dropna)
-#print(glathida_gridded.isna().sum())
+glathida_gridded = glathida_gridded.dropna(subset=cols_dropna)
+#print(glathida_gridded.isna().sum().T)
 
 print(f"Finished. No. original measurements {len(glathida)} down to {len(glathida_gridded)}, divided into:")
 print(f"{glathida_gridded['RGI'].value_counts()}")
