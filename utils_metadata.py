@@ -490,10 +490,20 @@ def find_cluster_with_graph(graph, start_node, max_depth=None):
 
     return list(nodes_at_depth)
 
-def get_possible_cluster(graph, start_node, glacier_epsg, rgi, rgi_glaciers, name_column_id):
+def get_possible_cluster(graph, start_node, glacier_epsg, rgi, rgi_glaciers, name_column_id, config):
 
+    # Get rgi clustering limits from config file
+    rgi_clustering_limits = config.rgi_clustering_limits.get(f"rgi_{rgi}", False)
+
+    # if rgi does not contemplate clustering, return False
+    if rgi_clustering_limits is False:
+        return False
+
+    # we are in the case of a rgi that contemplate clustering
+
+    # Return False if the start node is not in the graph (isolated glacier)
     if not graph.has_node(start_node):
-        return False  # Return False if the start node is not in the graph (isolated glacier)
+        return False
 
     # Step 1: Create a cluster, i.e. all glaciers connected to the start glacier
     cluster_nodes = networkx.node_connected_component(graph, start_node)
@@ -512,20 +522,15 @@ def get_possible_cluster(graph, start_node, glacier_epsg, rgi, rgi_glaciers, nam
     max_area_for_clustering = 10000  # km2
 
     # Step 4: calculate cluster complexity based on graph parameters and cluster total area
-    if rgi == 3: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 50 and cluster_no_edges <= 90)
-    elif rgi == 4: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
-    elif rgi == 5: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
-    elif rgi == 6: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 100 and cluster_no_edges <= 999)
-    elif rgi == 7: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
-    elif rgi == 9: is_low_complexity = (cluster_min_depth <= 12 and cluster_no_nodes <= 144 and cluster_no_edges <= 252)
-    #elif rgi == 19: is_low_complexity = (cluster_min_depth <= 3 and cluster_no_nodes <= 30 and cluster_no_edges <= 40)
-    elif rgi == 19: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 44 and cluster_no_edges <= 75)
-    else: raise ValueError(f"Deploy on cluster not supported for rgi {rgi}")
-    #print(cluster_min_depth, cluster_no_nodes, cluster_no_edges, is_low_complexity)
+    is_low_complexity = (
+        cluster_min_depth <= rgi_clustering_limits["min_depth"]
+        and cluster_no_nodes <= rgi_clustering_limits["no_nodes"]
+        and cluster_no_edges <= rgi_clustering_limits["no_edges"]
+        and cluster_area < max_area_for_clustering
+    )
+    #print(cluster_min_depth, cluster_no_nodes, cluster_no_edges, cluster_area)
 
-    is_low_complexity = is_low_complexity and cluster_area < max_area_for_clustering
-
-    # Step 4: if cluster too complex, return False, otherwise return cluster dataframe
+    # Step 5: if cluster too complex, return False, otherwise return cluster dataframe
     if is_low_complexity is False:
         return False
     else:
