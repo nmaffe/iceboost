@@ -16,29 +16,30 @@ NSIDC_icethickness_Greenland_dir: '/media/maffe/nvme/Greenland_NSIDC/thickness/'
 NSIDC_icethickness_Antarctica_dir: '/media/maffe/nvme/Antarctica_NSIDC/thickness/NSIDC-0756/' # BedMachine v3
 
 model_input_dir: '/media/maffe/nvme/iceboost_model_saved/'
-#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250106/'
-model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250212/'
-#model_filename_xgb: 'iceboost_xgb_20240731.json'
-#model_filename_cat: 'iceboost_cat_20240731.cbm'
-#model_filename_xgb: 'iceboost_xgb_20241012.json'
-#model_filename_cat: 'iceboost_cat_20241012.cbm'
-#model_filename_xgb: 'iceboost_xgb_20250206.json'
-#model_filename_cat: 'iceboost_cat_20250206.cbm'
+#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250212/'
+#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250312/'
+model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250318/'
 #model_filename_xgb: 'iceboost_xgb_20250210.json'
 #model_filename_cat: 'iceboost_cat_20250210.cbm'
-model_filename_xgb: 'iceboost_xgb_20250212.json'
-model_filename_cat: 'iceboost_cat_20250212.cbm'
+#model_filename_xgb: 'iceboost_xgb_20250212.json'
+#model_filename_cat: 'iceboost_cat_20250212.cbm'
+#model_filename_xgb: 'iceboost_xgb_20250312.json'
+#model_filename_cat: 'iceboost_cat_20250312.cbm'
+model_filename_xgb: 'iceboost_xgb_20250318.json'
+model_filename_cat: 'iceboost_cat_20250318.cbm'
 #metadata_csv_file: '/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata38_hmineq1.0_tmin20050000_mean_grid_100_with_icebridge.csv'
 #metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250206_hmineq1.0_tmin20050000_mean_grid_100.csv'
 #metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250210_hmineq1.0_tmin20050000_mean_grid_100.csv'
-metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250212_hmineq1.0_tmin20050000_mean_grid_100.csv'
+#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250212_hmineq1.0_tmin20050000_mean_grid_100.csv'
+#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250312_hmineq1.0_tmin20050000_mean_grid_100.csv'
+metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250318_hmineq1.0_tmin20050000_mean_grid_100.csv'
 
 # model deploy save figures
 deploy_save_figs: 0
 
 # Global deploy
 deploy_global_save_figs: 0 # save regional run figures and tif
-model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250212/'
+model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250318/'
 
 # configs for feature fetching
 graph_max_layer_depth: 3 # maximum depth consider in the graph used to calculate the glacier cluster
@@ -59,6 +60,16 @@ featuresVel: &vel ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa']
 features:
     - *base
     - *vel
+
+rgi_clustering_limits:
+  rgi_3: {min_depth: 5, no_nodes: 50, no_edges: 90}
+  rgi_4: {min_depth: 5, no_nodes: 40, no_edges: 90}
+  rgi_5: {min_depth: 5, no_nodes: 40, no_edges: 90}
+  rgi_6: {min_depth: 6, no_nodes: 100, no_edges: 999}
+  rgi_7: {min_depth: 6, no_nodes: 40, no_edges: 90}
+  rgi_9: {min_depth: 12, no_nodes: 144, no_edges: 252}
+  rgi_19: {min_depth: 6, no_nodes: 44, no_edges: 75}
+
 n_points_regression_single: 30000
 n_points_regression_cluster: 200000
 target: 'THICKNESS'
