@@ -5,6 +5,8 @@ coastlines_gshhg_dir: '/media/maffe/nvme/gshhg/'
 racmo_dir: '/media/maffe/nvme/racmo/'
 ERA5_t2m_dir: '/media/maffe/nvme/ERA5/'
 link_ids_rgi6_rgi7_csv: '/media/maffe/nvme/link_ids_rgi_7_62/link_ids_rgi_7_62.csv'
+ice_sheet_boundary_greenland_shp: '/media/maffe/nvme/ice_sheet_grounded_ice_shp/greenland/greenland_is_3413.shp'
+ice_sheet_boundary_antarctica_shp: '/media/maffe/nvme/ice_sheet_grounded_ice_shp/antarctica/antarctica_is_3031.shp'
 
 millan_velocity_dir: '/media/maffe/nvme/Millan/velocity/'
 NSIDC_velocity_Greenland_dir: '/media/maffe/nvme/Greenland_NSIDC/velocity/'
