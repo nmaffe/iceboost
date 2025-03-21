@@ -62,7 +62,6 @@ def populate_glacier_with_metadata(glacier_name,
     # unpack config
     n_points_regression_single = config.n_points_regression_single
     n_points_regression_cluster = config.n_points_regression_cluster
-    k_max_geoms = config.kdtree_dist_max_k_geometries
     graph_max_layer_depth = config.graph_max_layer_depth
 
     rgi = int(rgi)
@@ -77,7 +76,7 @@ def populate_glacier_with_metadata(glacier_name,
         name_column_id = 'rgi_id'
         name_column_name = 'glac_name'
 
-    if glacier_name not in rgi_glaciers['RGIId'].values:
+    if glacier_name not in rgi_glaciers[name_column_id].values:
         raise ValueError(f"Error: {glacier_name} not present in the glacier dataframe.")
 
     # get glacier geometry
@@ -2109,7 +2108,7 @@ def populate_glacier_with_metadata(glacier_name,
         # Perform nearest neighbor search for each point and calculate minimum distances
         # k can be decreased for speedup to, e.g. k=200. I suspect that k can be somehow as low as 200, and in such
         # case probably pykdtree_kdtree is faster than KDTree
-        distances, indices = kdtree.query(points_coords_array, k=min(k_max_geoms,len(geoseries_geometries_epsg)))
+        distances, indices = kdtree.query(points_coords_array, k=len(geoseries_geometries_epsg))
         if distances.ndim == 1: distances = distances.reshape(-1, 1) # needed for use_pykdtree_kdtree
         min_distances = np.min(distances, axis=1)
 
