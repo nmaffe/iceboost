@@ -81,6 +81,7 @@ def populate_glacier_with_metadata(glacier_name,
 
     # get glacier geometry
     gl_df = rgi_glaciers.loc[rgi_glaciers[name_column_id]==glacier_name]
+    gl_df.index = [glacier_name] # set the name as index (needed to recording glacier id for generated points)
     gl_geom = gl_df['geometry'].item()  # glacier geometry Polygon
     gl_geom_ext = Polygon(gl_geom.exterior)  # glacier geometry Polygon
     gl_geom_nunataks_list = [Polygon(nunatak) for nunatak in gl_geom.interiors]  # list of nunataks Polygons
@@ -139,36 +140,33 @@ def populate_glacier_with_metadata(glacier_name,
     # area of the cluster
     area_cluster = rgi_glaciers.loc[rgi_glaciers[name_column_id].isin(list_cluster_RGIIds), 'area'].sum()
 
-    # Create Geopandas geoseries objects of glacier geometries (boundary and nunataks)
-    cluster_geometry_list = rgi_glaciers.loc[
-        rgi_glaciers[name_column_id].isin(list_cluster_RGIIds), 'geometry'].tolist()
+    # Create Geopandas geodataframe of glacier geometries (boundary and nunataks)
+    cluster_geometry_4326_separate = gpd.GeoDataFrame(geometry=rgi_glaciers.loc[
+        rgi_glaciers[name_column_id].isin(list_cluster_RGIIds), 'geometry'], crs="EPSG:4326")
 
-    # Combine into a series of all glaciers in the cluster
-    cluster_geometry_4326 = gpd.GeoSeries(cluster_geometry_list, crs="EPSG:4326")
+    # Set the glacier ids as the index (needed to keep track of which glacier each generated points belong to)
+    cluster_geometry_4326_separate.index = list_cluster_RGIIds
 
     # Suppress the specific warning about buffering in a geographic CRS
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore",
                                 message="Geometry is in a geographic CRS. Results from 'buffer' are likely incorrect")
-        buffered_geometries = cluster_geometry_4326.buffer(0.0004)
+        buffered_geometries = cluster_geometry_4326_separate.buffer(0.0004)
 
     # remove ice divides
     cluster_geometry_4326 = gpd.GeoSeries(buffered_geometries.union_all(method='unary'), crs="EPSG:4326")
 
-    # cluster exterior and interior dataframes
+    # cluster exterior and interior dataframes (likely remove with new grid-generation scheme)
     cluster_ext_gdf = gpd.GeoDataFrame(geometry=[Polygon(cluster_geometry_4326.iloc[0].exterior)], crs="EPSG:4326")
     cluster_nunataks_gdf = gpd.GeoDataFrame(
         geometry=[Polygon(interior) for interior in cluster_geometry_4326.iloc[0].interiors], crs="EPSG:4326")
 
     #fig, ax = plt.subplots()
-    #cluster_geometry_4326.plot(ax=ax, color="k", ec="blue", alpha=0.5)
+    #cluster_geometry_4326_separate.plot(ax=ax, ec='r', fc='none')
+    #cluster_geometry_4326.plot(ax=ax, ec='b', fc='none')
     #plt.show()
 
-    # Calculate the area of the cluster in km2 (NOTE that given the buffer, this area is slightly bigger)
-    #area_cluster_old, perimeter_cluster = Geod(ellps="WGS84").geometry_area_perimeter(Polygon(cluster_geometry_4326.iloc[0].exterior))
-    #area_cluster_old = abs(area_cluster_old) * 1e-6  # km^2
     print(f"Cluster (4326): {area_cluster:.5f} km2 and {no_glaciers_in_cluster} glaciers created in: {time.time() - t_cluster0:.3f}") if verbose else None
-    #print(area_cluster, area_cluster_old)
 
     # Generate points
     tp0 = time.time()
@@ -178,18 +176,20 @@ def populate_glacier_with_metadata(glacier_name,
         if config.mode_point_generation == 'random':
             points = generate_points(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_cluster)
         elif config.mode_point_generation == 'grid':
-            points = generate_points_on_grid(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, max_points=n_points_regression_cluster)
+            points_df = generate_points_on_grid_min_100meter(in_points_df=points_df, gdf=cluster_geometry_4326_separate)
+            #points = generate_points_on_grid(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, max_points=n_points_regression_cluster)
         else: raise ValueError("Unsupported mode for data generation.")
-        gl_geom = Polygon(cluster_geometry_4326.iloc[0]) # override
+        gl_geom = Polygon(cluster_geometry_4326.iloc[0]) # override (we need this if we have clustered)
         gl_geom_ext = Polygon(gl_geom.exterior)         # override
         gl_geom_nunataks_gdf = cluster_nunataks_gdf     # override
-        gl_geom_ext_gdf = cluster_ext_gdf               # override
+        gl_geom_ext_gdf = cluster_ext_gdf               # override (I guess we need this)
     else:
         print(f"Running single glacier") if verbose else None
         if config.mode_point_generation == 'random':
             points = generate_points(gdf_ext=gl_geom_ext_gdf, gdf_nuns=gl_geom_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_single)
         elif config.mode_point_generation == 'grid':
-            points = generate_points_on_grid(gdf_ext=gl_geom_ext_gdf, gdf_nuns=gl_geom_nunataks_gdf, max_points=n_points_regression_single)
+            #points = generate_points_on_grid(gdf_ext=gl_geom_ext_gdf, gdf_nuns=gl_geom_nunataks_gdf, max_points=n_points_regression_single)
+            points_df = generate_points_on_grid_min_100meter(in_points_df=points_df, gdf=gl_df)
         else: raise ValueError("Unsupported mode for data generation.")
 
     plot_gen_points = False
@@ -198,7 +198,7 @@ def populate_glacier_with_metadata(glacier_name,
         cluster_geometry_4326.plot(ax=ax1, ec='k', fc='none')
         cluster_ext_gdf.plot(ax=ax2, ec='b', fc='none')
         if len(cluster_nunataks_gdf)>0: cluster_nunataks_gdf.plot(ax=ax2, ec='r', fc='none')
-        ax2.scatter(x=points['lons'], y=points['lats'], s=1)
+        ax2.scatter(x=points_df['lons'], y=points_df['lats'], s=1)
         plt.show()
 
     #fig, ax = plt.subplots()
@@ -209,12 +209,12 @@ def populate_glacier_with_metadata(glacier_name,
 
     tp1 = time.time()
     tgenpoints = tp1-tp0
-    print(f"We have generated {len(points['lats'])} points in {tgenpoints:.3f}") if verbose else None
+    print(f"We have generated {len(points_df)} points in {tgenpoints:.3f}") if verbose else None
 
     # Fill these features
-    points_df['lats'] = points['lats']
-    points_df['lons'] = points['lons']
-    points_df['nunataks'] = points['nunataks']
+    #points_df['lats'] = points['lats']
+    #points_df['lons'] = points['lons']
+    #points_df['nunataks'] = points['nunataks']
     if (points_df['nunataks'].sum() != 0):
         print(f"The generation pipeline has produced n. {points_df['nunataks'].sum()} points inside nunataks")
         raise ValueError
@@ -1823,6 +1823,7 @@ def populate_glacier_with_metadata(glacier_name,
         print("Mass balance with racmo") if verbose else None
         # Surface mass balance with racmo
         path_RACMO_folder = config.racmo_dir
+        #todo: put filename in config.yaml
         if rgi==5:
             racmo_file = "greenland_racmo2.3p2/smb_greenland_mean_1961_1990_RACMO23p2_gf.nc"
         elif rgi==19:
@@ -2011,6 +2012,10 @@ def populate_glacier_with_metadata(glacier_name,
         # calculate if the glacier is mostly inside the ice sheet
         glacier_ext_espg = gl_geom_ext_gdf.to_crs(epsg=glacier_epsg)
         intersection = glacier_ext_espg.intersection(ice_sheet_epsg)
+
+        fig, ax = plt.subplots()
+        glacier_ext_espg.plot(ax=ax, ec='k', fc='none')
+        plt.show()
 
         area_intersection = intersection.area.item() * 1e-6
         area_glacier_ext = glacier_ext_espg.area.item() * 1e-6
