@@ -21,8 +21,6 @@ model_input_dir: '/media/maffe/nvme/iceboost_model_saved/'
 #model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250212/'
 #model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250312/'
 model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250318/'
-#model_filename_xgb: 'iceboost_xgb_20250210.json'
-#model_filename_cat: 'iceboost_cat_20250210.cbm'
 #model_filename_xgb: 'iceboost_xgb_20250212.json'
 #model_filename_cat: 'iceboost_cat_20250212.cbm'
 #model_filename_xgb: 'iceboost_xgb_20250312.json'
@@ -30,8 +28,6 @@ model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/i
 model_filename_xgb: 'iceboost_xgb_20250318.json'
 model_filename_cat: 'iceboost_cat_20250318.cbm'
 #metadata_csv_file: '/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata38_hmineq1.0_tmin20050000_mean_grid_100_with_icebridge.csv'
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250206_hmineq1.0_tmin20050000_mean_grid_100.csv'
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250210_hmineq1.0_tmin20050000_mean_grid_100.csv'
 #metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250212_hmineq1.0_tmin20050000_mean_grid_100.csv'
 #metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250312_hmineq1.0_tmin20050000_mean_grid_100.csv'
 metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250318_hmineq1.0_tmin20050000_mean_grid_100.csv'
@@ -43,24 +39,23 @@ deploy_save_figs: 0
 deploy_global_save_figs: 0 # save regional run figures and tif
 model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250318/'
 
-# configs for feature fetching
-graph_max_layer_depth: 3 # maximum depth consider in the graph used to calculate the glacier cluster
-deploy_mode: 'auto'               # Options: 'auto' for cluster, 'single' for single glacier
-n_jobs: 8                           # Options: 1 for single processing, 2+ for multiprocessing
-mode_point_generation: 'random'       # Options: 'random', 'grid'
 
-# configs for model inference
+# model features
 featuresBase: &base ['Area',  'Perimeter', 'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax',
                 'elevation', 'elevation_from_zmin', 'dist_from_border_km_geom',
                    'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
                  'curv_50',  'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa', 'dmdtda_hugo',  'deltaz',
                      'smb', 't2m', 'dist_from_ocean', 'Cluster_area', 'elevation_0_1']
-
 featuresVel: &vel ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa']
-
 features:
     - *base
     - *vel
+
+# configs for feature fetching
+graph_max_layer_depth: 3 # maximum depth consider in the graph used to calculate the glacier cluster
+deploy_mode: 'auto'               # Options: 'auto' for cluster, 'single' for single glacier
+mode_point_generation: 'grid'       # Options: 'random', 'grid'
+n_jobs: 1                           # Options: 1 for single processing, 2+ for multiprocessing
 
 rgi_clustering_limits:
   rgi_1: {min_depth: 4, no_nodes: 15, no_edges: 20}
