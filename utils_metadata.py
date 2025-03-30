@@ -615,6 +615,8 @@ def plot_feature_scatter(config, test_glacier):
 
 def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None):
 
+    #print(f"We have to generate grid points inside {len(gdf)} glacier(s)")
+
     # Get the bounding box
     minx, miny, maxx, maxy = gdf.total_bounds
     delta_lon = maxx - minx
@@ -628,34 +630,42 @@ def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None):
     lon_res = spatial_posting / (111320 * np.cos(np.deg2rad(mean_lat)))  # Longitude resolution in degrees
     Nx = int(delta_lon / lon_res)
     Ny = int(delta_lat / lat_res)
-    #print(f"lat_res: {lat_res} lon_res: {lon_res} posting {spatial_posting}")
+    no_glaciers_covered = -999
 
-    # If too few points, decrease grid spacing
-    while (Nx * Ny) < minimum_no_points_in_box and spatial_posting > 2.:
+    # If not all glaciers covered by grid, decrease grid spacing
+    #while (Nx * Ny) < minimum_no_points_in_box and spatial_posting > 2.:
+    while no_glaciers_covered != len(gdf) and spatial_posting > 2.:
         spatial_posting -= 1.  # Decrease spatial posting
         lat_res = spatial_posting / 111320  # Recalculate lat resolution
         lon_res = spatial_posting / (111320 * np.cos(np.deg2rad(mean_lat)))  # Recalculate lon resolution
         Nx = int(delta_lon / lon_res)  # Recalculate the number of points in the x direction
         Ny = int(delta_lat / lat_res)  # Recalculate the number of points in the y direction
         #print(f"lat_res: {lat_res} lon_res: {lon_res} posting {spatial_posting}")
+        if (Nx * Ny) < minimum_no_points_in_box:
+            continue
+
+        # Create grid coordinates
+        xs = np.arange(minx, maxx, lon_res)
+        ys = np.arange(miny, maxy, lat_res)
+        xx, yy = np.meshgrid(xs, ys)
+
+        # Create dataframe of points in bounding box
+        points_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(xx.ravel(), yy.ravel()), crs=gdf.crs)
+
+        # Get only points inside the glacier(s)
+        points_inside = gpd.sjoin(points_gdf, gdf, predicate="within", how="inner")
+        #print(points_inside)
+
+        no_glaciers_covered = points_inside['index_right'].nunique()
+
     #print(f"lat_res: {lat_res} lon_res: {lon_res} posting {spatial_posting}")
 
-    # Create grid coordinates
-    xs = np.arange(minx, maxx, lon_res)
-    ys = np.arange(miny, maxy, lat_res)
-    xx, yy = np.meshgrid(xs, ys)
-
-    # Generate random points in the bounding box
-    points_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(xx.ravel(), yy.ravel()), crs=gdf.crs)
-
-    # Get only points inside the glacier(s)
-    points_inside = gpd.sjoin(points_gdf, gdf, predicate="within", how="inner")#.drop(columns=['index_right'])
     # Rename the index
     points_inside = points_inside.rename(columns={'index_right': 'polygon_index'})
-    #print(points_inside)
 
     assert len(points_inside) > 500, "Generated too few points. Check point generation on grid."
     assert len(points_inside) < 3e6, "Generated too many points. Not a problem but carefully check if i need so many."
+    assert no_glaciers_covered == len(gdf), "The generated grid does not cover all glaciers."
 
     #fig, ax = plt.subplots()
     #points_inside.plot(ax=ax, color='red', markersize=1, alpha=0.2)
@@ -667,18 +677,8 @@ def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None):
     in_points_df["lats"] = points_inside.geometry.y.values
     in_points_df["polygon"] = points_inside.polygon_index.values
     in_points_df["nunataks"] = 0.0
-    #test = in_points_df["polygon"].value_counts()
-    #print(test)
-
-    # Prepare dictionary output
-    #points = {
-    #    "lons": points_inside.geometry.x.tolist(),
-    #    "lats": points_inside.geometry.y.tolist(),
-    #    "nunataks": [0.0] * len(points_inside)
-    #}
 
     return in_points_df
-    #return points
 
 def generate_points_on_grid(gdf_ext=None, gdf_nuns=None, max_points=None):
 
