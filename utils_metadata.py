@@ -167,10 +167,29 @@ def get_cmap(name):
 
 
 def calc_geoid_heights(lons=None, lats=None, h_wgs84=None):
-    '''Calculates orthometric heights'''
+    """
+    :param h_wgs84: ellipsoid height
+    :return: orthometric height (Hmsl)
+    """
     transformer = Transformer.from_crs("epsg:4326", "epsg:3855", always_xy=True)
     _, _, h_egm2008 = transformer.transform(lons, lats, h_wgs84)
     return h_egm2008
+
+def calc_ellipsoid_heights(lons=None, lats=None, H=None):
+    """
+    :param H: orthometric height (Hmsl)
+    :return: ellipsoid height (hwgs84)
+    """
+    lons = np.array(lons)
+    lats = np.array(lats)
+    H = np.array(H)
+
+    zeros = np.zeros(len(lons))
+    transformer = Transformer.from_crs("epsg:4326", "epsg:3855", always_xy=True)
+    _, _, N = transformer.transform(lons, lats, zeros) # this yields N = -H
+    N = N * -1
+    h_wgs84 = H + N
+    return h_wgs84
 
 def calc_volume_glacier(y=None, area=0, h_egm2008=None):
 
@@ -625,22 +644,23 @@ def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None):
     #print(minx, miny, maxx, maxy)
 
     spatial_posting = 100.
-    minimum_no_points_in_box = 3e4
+    minimum_no_points_in_box = 1e4
     lat_res = spatial_posting / 111320  # Latitude resolution in degrees
     lon_res = spatial_posting / (111320 * np.cos(np.deg2rad(mean_lat)))  # Longitude resolution in degrees
     Nx = int(delta_lon / lon_res)
     Ny = int(delta_lat / lat_res)
     no_glaciers_covered = -999
+    points_inside = -999
 
     # If not all glaciers covered by grid, decrease grid spacing
     #while (Nx * Ny) < minimum_no_points_in_box and spatial_posting > 2.:
-    while no_glaciers_covered != len(gdf) and spatial_posting > 2.:
+    while no_glaciers_covered != len(gdf) and spatial_posting > 1.:
         spatial_posting -= 1.  # Decrease spatial posting
         lat_res = spatial_posting / 111320  # Recalculate lat resolution
         lon_res = spatial_posting / (111320 * np.cos(np.deg2rad(mean_lat)))  # Recalculate lon resolution
         Nx = int(delta_lon / lon_res)  # Recalculate the number of points in the x direction
         Ny = int(delta_lat / lat_res)  # Recalculate the number of points in the y direction
-        #print(f"lat_res: {lat_res} lon_res: {lon_res} posting {spatial_posting}")
+        #print(f"lat_res: {lat_res} lon_res: {lon_res} posting {spatial_posting} {Nx*Ny}")
         if (Nx * Ny) < minimum_no_points_in_box:
             continue
 
@@ -659,6 +679,7 @@ def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None):
         no_glaciers_covered = points_inside['index_right'].nunique()
 
     #print(f"lat_res: {lat_res} lon_res: {lon_res} posting {spatial_posting}")
+    assert not isinstance(points_inside, int), f"Problems with grid generation {gdf.index}."
 
     # Rename the index
     points_inside = points_inside.rename(columns={'index_right': 'polygon_index'})
