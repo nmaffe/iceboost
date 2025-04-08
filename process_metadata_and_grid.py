@@ -30,7 +30,11 @@ args = parser.parse_args()
 
 # Input datasets
 GLATHIDA_FOLDER = "/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/"
-GLATHIDA_FILE = "glathida42.csv"
+GLATHIDA_FILE = "glathida43.csv"
+RUTH_FOLDER = "/media/maffe/nvme/additional_glacier_ice_thickness_data/ruth_glacier/"
+RUTH_FILE = "ruth_glacier_ice_thick_train_iceboost.csv"
+PATAGONIA_FOLDER = "/media/maffe/nvme/additional_glacier_ice_thickness_data/patagonia/"
+PATAGONIA_FILE = "patagonia_ice_thick_train_iceboost.csv"
 POLAR_FOLDER = "/media/maffe/nvme/polar_ice_thickness_data/"
 POLAR_FILE = "polar_ice_thick_train_iceboost3.parquet"
 
@@ -41,9 +45,18 @@ filename_out = f"iceboost_train_{today}_hmineq{args.hmin}_tmin{args.tmin}_{args.
 print(f"Training dataset will be saved as {filename_out}")
 print("*"*100)
 
-""" Import ungridded dataset """
+""" Import ungridded datasets """
+ruth = pd.read_csv(f"{RUTH_FOLDER}{RUTH_FILE}", low_memory=False)
+ruth['THICKNESS'] = ruth['THICKNESS'].astype(float)
+patagonia = pd.read_csv(f"{PATAGONIA_FOLDER}{PATAGONIA_FILE}", low_memory=False)
+patagonia['THICKNESS'] = patagonia['THICKNESS'].astype(float)
+
 glathida = pd.read_csv(f"{GLATHIDA_FOLDER}{GLATHIDA_FILE}", low_memory=False)
 glathida['THICKNESS'] = glathida['THICKNESS'].astype(float)
+
+print(f"Glathida: {len(glathida)}")
+glathida = pd.concat([glathida, ruth, patagonia], axis=0, ignore_index=True)
+print(f"Glathida with Ruth and Patagonia joining the party: {len(glathida)}")
 
 # This glacier has a factor 10 too much.
 glathida.loc[glathida['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
@@ -88,7 +101,7 @@ bad_data_to_remove = [
     ('RGI60-05.13785', 1, np.nan),
     ('RGI60-05.13961', 33, np.nan),
     ('RGI60-05.13983', 16, np.nan),
-    ('RGI60-05.14147', 150, np.nan),
+    ('RGI60-05.14147', np.nan, 150),
     ('RGI60-05.14783', np.nan, 50),
     ('RGI60-05.14816', np.nan, np.nan),
     ('RGI60-11.02739', np.nan, np.nan),
@@ -363,6 +376,7 @@ glathida_gridded = pd.concat(gridded_data_list, ignore_index=True)
 
 # Add these features
 glathida_gridded['elevation_from_zmin'] = glathida_gridded['elevation'] - glathida_gridded['zmin']
+glathida_gridded['elevation_to_zmax'] = glathida_gridded['zmax'] - glathida_gridded['elevation']
 glathida_gridded['deltaz'] = glathida_gridded['zmax'] - glathida_gridded['zmin']
 
 # Remove all nans from all features except for ith_m and ith_f
