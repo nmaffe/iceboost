@@ -1822,15 +1822,13 @@ def populate_glacier_with_metadata(glacier_name,
     if rgi in [5,19]:
         print("Mass balance with racmo") if verbose else None
         # Surface mass balance with racmo
-        path_RACMO_folder = config.racmo_dir
-        #todo: put filename in config.yaml
         if rgi==5:
-            racmo_file = "greenland_racmo2.3p2/smb_greenland_mean_1961_1990_RACMO23p2_gf.nc"
+            racmo_file = config.racmo_file_nc_greenland
         elif rgi==19:
-            racmo_file = "antarctica_racmo2.3p2/2km/smb_antarctica_mean_1979_2021_RACMO23p2_gf.nc"
+            racmo_file = config.racmo_file_nc_antarctica
         else: raise ValueError('rgi value for RACMO smb calculation not recognized')
 
-        racmo = rioxarray.open_rasterio(f'{path_RACMO_folder}{racmo_file}')
+        racmo = rioxarray.open_rasterio(f'{racmo_file}')
 
         eastings_racmo, northings_racmo = (Transformer.from_crs("EPSG:4326", racmo.rio.crs)
                                .transform(points_df['lats'], points_df['lons']))
@@ -2013,10 +2011,6 @@ def populate_glacier_with_metadata(glacier_name,
         glacier_ext_espg = gl_geom_ext_gdf.to_crs(epsg=glacier_epsg)
         intersection = glacier_ext_espg.intersection(ice_sheet_epsg)
 
-        fig, ax = plt.subplots()
-        glacier_ext_espg.plot(ax=ax, ec='k', fc='none')
-        plt.show()
-
         area_intersection = intersection.area.item() * 1e-6
         area_glacier_ext = glacier_ext_espg.area.item() * 1e-6
 
@@ -2083,41 +2077,18 @@ def populate_glacier_with_metadata(glacier_name,
         # Extract all utm coordinates of points
         points_coords_array = np.column_stack((eastings, northings)) #(N,2)
 
-        # Extract all coordinates from the GeoSeries geometries
-        # For some reason for version 70G there is an extra dimension, z.
-        # In fact I find that cluster_geometry_epsg.item().has_z >> True.
         if geoseries_geometries_epsg.has_z.any():
             # Remove the third dimension by stripping out the z-values.
-            #geoms_coords_array = np.concatenate([np.array(geom.xy).T for geom in geoseries_geometries_epsg.geometry])
             geoms_coords_array = np.concatenate(geoseries_geometries_epsg.geometry.apply(lambda geom: np.array(geom.xy).T))
 
         else:
-            #geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
             geoms_coords_array = np.concatenate(geoseries_geometries_epsg.geometry.apply(lambda geom: np.array(geom.coords)))
-        #if version == '62':
-        #    geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in geoseries_geometries_epsg.geometry])
-        #elif version == '70G':
-        #    # Remove the third dimension by stripping out the z-values.
-        #    geoms_coords_array = np.concatenate([np.array(geom.xy).T for geom in geoseries_geometries_epsg.geometry])
 
-        # it appears that when no. geometries is low pykdtree_kdtree is faster, else sklearn KDTree is faster.
-        if no_geometries_in_cluster > 2000:
-            kdtree = sklearn.neighbors.KDTree(geoms_coords_array)
-            print('using sklearn.neighbors.KDTree') if verbose else None
-        else:
-            kdtree = pykdtree.kdtree.KDTree(geoms_coords_array)
-            print('using pykdtree.kdtree.KDTree') if verbose else None
-
-        #print(geoms_coords_array.shape, points_coords_array.shape)
-
-        # Perform nearest neighbor search for each point and calculate minimum distances
-        # k can be decreased for speedup to, e.g. k=200. I suspect that k can be somehow as low as 200, and in such
-        # case probably pykdtree_kdtree is faster than KDTree
-        distances, indices = kdtree.query(points_coords_array, k=len(geoseries_geometries_epsg))
-        if distances.ndim == 1: distances = distances.reshape(-1, 1) # needed for use_pykdtree_kdtree
-        min_distances = np.min(distances, axis=1)
-
-        min_distances /= 1000.
+        #kdtree = sklearn.neighbors.KDTree(geoms_coords_array)
+        kdtree = pykdtree.kdtree.KDTree(geoms_coords_array)
+        distances, _ = kdtree.query(points_coords_array, k=1)
+        assert distances.ndim == 1, "Bad distances matrix."
+        min_distances = distances / 1000.
 
         td2 = time.time()
         print(f"Distances calculated with KDTree in {td2 - td1}") if verbose else None
@@ -2129,12 +2100,12 @@ def populate_glacier_with_metadata(glacier_name,
         #ax.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='r')  # first entry is outside border
         #for geom in geoseries_geometries_epsg.loc[1:]:
         #    ax.plot(*geom.xy, lw=1, c='grey')
-        ice_sheet_epsg.plot(ax=ax, edgecolor='red', facecolor='none')
+        #ice_sheet_epsg.plot(ax=ax, edgecolor='red', facecolor='none')
         geoseries_geometries_epsg.loc[[0]].plot(ax=ax, edgecolor='blue', facecolor='none')
         if len(geoseries_geometries_epsg)>1:
             geoseries_geometries_epsg.loc[1:].plot(ax=ax, edgecolor='orange', facecolor='none')
 
-        glacier_ext_espg.plot(ax=ax, edgecolor='green', facecolor='none', linewidth=1, zorder=2)
+        #glacier_ext_espg.plot(ax=ax, edgecolor='green', facecolor='none', linewidth=1, zorder=2)
 
         #geoseries_geometries_epsg.plot(ax=ax)
         #sgeom = ax.scatter(x=geoms_coords_array[:, 0], y=geoms_coords_array[:, 1], c='r', zorder=0)
@@ -2209,77 +2180,6 @@ def populate_glacier_with_metadata(glacier_name,
             # note that the generated points cannot be in nunataks so distances are well defined
             points_df.loc[i, 'dist_from_border_km_geom'] = min_dist/1000.
 
-            # Plot
-            plot_calculate_distance = False
-            if plot_calculate_distance:
-
-                fig, (ax1, ax2) = plt.subplots(1,2)
-                ax1.plot(*gl_geom_ext.exterior.xy, lw=1, c='red')
-                for interior in gl_geom.interiors:
-                    ax1.plot(*interior.xy, lw=1, c='blue')
-
-                # Plot boundaries (only external periphery) of all glaciers in the cluster
-                if list_cluster_RGIIds is not None:
-                    for gl_neighbor_id in list_cluster_RGIIds:
-                        gl_neighbor_df = rgi_glaciers.loc[rgi_glaciers[name_column_id] == gl_neighbor_id]
-                        gl_neighbor_geom = gl_neighbor_df['geometry'].item()  # glacier geometry Polygon
-                        ax1.plot(*gl_neighbor_geom.exterior.xy, lw=1, c='orange', zorder=0)
-
-                # intersects of glacier (need only for plotting purposes)
-                gl_intersects = oggm.utils.get_rgi_intersects_entities([glacier_name], version='62')
-                # Plot intersections of central glacier with its neighbors
-                for k, intersect in enumerate(gl_intersects['geometry']):  # Linestring gl_intersects
-                    ax1.plot(*intersect.xy, lw=1, color='k')
-
-                # Plot intersections of all glaciers in the cluster
-                if list_cluster_RGIIds is not None:
-                    cluster_intersects = oggm.utils.get_rgi_intersects_entities(list_cluster_RGIIds,
-                                                                                version='62')  # (need only for plotting purposes)
-                else:
-                    cluster_intersects = None
-
-                if cluster_intersects is not None:
-                    for k, intersect in enumerate(cluster_intersects['geometry']):
-                        ax1.plot(*intersect.xy, lw=1, color='k') #np.random.rand(3)
-
-                    # Plot cluster ice divides removed
-                    if multipolygon:
-                        polygons = list(cluster_geometry_4326.item().geoms)
-                        cluster_exterior_ring = [polygon.exterior for polygon in polygons]  # list of shapely.geometry.polygon.LinearRing
-                        cluster_interior_ringSequences = [polygon.interiors for polygon in polygons]  # list of shapely.geometry.polygon.InteriorRingSequence
-                        cluster_interior_rings = [ring for sequence in cluster_interior_ringSequences for ring in sequence]  # list of shapely.geometry.polygon.LinearRing
-                        for exterior in cluster_exterior_ring:
-                            ax1.plot(*exterior.xy, lw=1, c='red', zorder=3)
-                        for interior in cluster_interior_rings:
-                            ax1.plot(*interior.xy, lw=1, c='blue', zorder=3)
-
-                    else:
-                        ax1.plot(*cluster_geometry_4326.item().exterior.xy, lw=1, c='red', zorder=3)
-                        for interior in cluster_geometry_4326.item().interiors:
-                            ax1.plot(*interior.xy, lw=1, c='blue', zorder=3)
-
-                if nunatak: ax1.scatter(lon, lat, s=50, lw=2, c='b')
-                else: ax1.scatter(lon, lat, s=50, lw=2, c='r', ec='r')
-
-                if multipolygon:
-                    for i_poly in range(num_multipoly):
-                        ax2.plot(*geoseries_geometries_epsg.loc[i_poly].xy, lw=1, c='red')  # first num_multipoly are outside borders
-                    for inter in geoseries_geometries_epsg.loc[num_multipoly:]:  # all interiors if present
-                        ax2.plot(*inter.xy, lw=1, c='blue')
-
-                else:
-                    ax2.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='red')  # first entry is outside border
-                    for inter in geoseries_geometries_epsg.loc[1:]:  # all interiors if present
-                        ax2.plot(*inter.xy, lw=1, c='blue')
-
-
-                if nunatak: ax2.scatter(*point_epsg.xy, s=50, lw=2, c='b')
-                else: ax2.scatter(*point_epsg.xy, s=50, lw=2, c='r', ec='r')
-                if debug_distance: ax2.scatter(*nearest_point_on_line.xy, s=50, lw=2, c='g')
-
-                ax1.set_title('EPSG 4326')
-                ax2.set_title(f'EPSG {glacier_epsg}')
-                plt.show()
 
     points_df['dist_from_border_km_geom'] = min_distances
     points_df['Cluster_geometries'] = no_geometries_in_cluster
@@ -2291,27 +2191,65 @@ def populate_glacier_with_metadata(glacier_name,
     print(f"Calculating the distances from ocean... ") if verbose else None
     tdistocean0 = time.time()
 
-    buffer = 1
-    llx, lly, urx, ury = gl_geom.bounds  # geometry bounds
-    box_geoms = coastlines_dataframe.cx[llx-buffer:urx+buffer,lly-buffer:ury+buffer]
+    # Greenland
+    if rgi == 5:
+        coastal_geoms = gpd.read_file(config.ice_sheet_coastlines_greenland_gpkg)  # EPSG:3413
+        assert len(coastal_geoms) == 1, "The coastal geometry should be a 1-line multipolygon"
 
-    #fig, ax = plt.subplots()
-    #box_geoms.plot(ax=ax, linestyle='-', linewidth=1, facecolor='none', edgecolor='red')
-    #geoseries_points_4326.plot(ax=ax, c='r', markersize=2)
-    #plt.show()
+        coastal_geoms_epsg = coastal_geoms.to_crs(epsg=glacier_epsg)
 
-    if len(box_geoms) == 0:
-        # We are in the island case in Antarctica, e.g. -73.10288797227037 -105.166778923743
-        # It may happen that no geometries gshhg are intercepted
-        # In this case we fill dataframe with dist_from_border_km_geom
+        glacier_center_epsg = gpd.GeoDataFrame(geometry=gpd.points_from_xy([cenLon], [cenLat]), crs="EPSG:4326").to_crs(glacier_epsg)
+        is_inside_coastal_geoms = glacier_center_epsg.geometry.iloc[0].within(coastal_geoms_epsg.geometry.iloc[0])
+        is_outside_coastal_geoms = not is_inside_coastal_geoms
+
+        print(f"The glacier is inside from coastal geometries: {is_inside_coastal_geoms}") if verbose else None
+
+    # Antarctica
+    elif rgi == 19:
+        coastal_geoms = gpd.read_file(config.ice_sheet_coastlines_antarctica_gpkg) # EPSG:3031
+        assert len(coastal_geoms) == 1, "The coastal geometry should be a 1-line multipolygon"
+
+        coastal_geoms_epsg = coastal_geoms.to_crs(epsg=glacier_epsg)
+
+        glacier_center_epsg = gpd.GeoDataFrame(geometry=gpd.points_from_xy([cenLon], [cenLat]), crs="EPSG:4326").to_crs(glacier_epsg)
+        is_inside_coastal_geoms = glacier_center_epsg.geometry.iloc[0].within(coastal_geoms_epsg.geometry.iloc[0])
+        is_outside_coastal_geoms = not is_inside_coastal_geoms
+
+        print(f"The glacier is inside from coastal geometries: {is_inside_coastal_geoms}") if verbose else None
+
+    # All other regions
+    else:
+        buffer = 1
+        llx, lly, urx, ury = gl_geom.bounds  # geometry bounds
+        coastal_geoms = coastlines_dataframe.cx[llx-buffer:urx+buffer,lly-buffer:ury+buffer] # EPSG:4326
+        glacier_center_4326 = gpd.GeoDataFrame(geometry=gpd.points_from_xy([cenLon], [cenLat]), crs="EPSG:4326")
+        is_inside_coastal_geoms = coastal_geoms.geometry.contains(glacier_center_4326.geometry.iloc[0]).any() # FASTER
+        #is_inside_coastal_geoms = glacier_center_4326.geometry.iloc[0].within(coastal_geoms.union_all(method='unary')) # SLOWER
+        is_outside_coastal_geoms = not is_inside_coastal_geoms
+
+        print(f"The glacier is inside from coastal geometries: {is_inside_coastal_geoms}") if verbose else None
+        # OLD - too restrictive
+        # is_outside_coastal_geoms = not any(gl_geom.within(box_geom) for box_geom in coastal_geoms.geometry)
+
+        #fig, ax = plt.subplots()
+        #coastal_geoms.plot(ax=ax, linestyle='-', linewidth=1, facecolor='none', edgecolor='red')
+        #ax.plot(*gl_geom.exterior.xy, "k-")
+        #gl_df.plot(ax=ax)
+        #plt.show()
+
+    # The fact that if the glacier is outside the coastal geometries we use the distance from border
+    # is an approximate solution. It may be improved.
+    if len(coastal_geoms) == 0 or is_outside_coastal_geoms:
         points_df['dist_from_ocean'] = points_df['dist_from_border_km_geom']
 
     else:
         # Reproject to glacier_epsg. This is approximately 0.13 s and the main computational cost for this method
-        box_geoms_epsg = box_geoms.to_crs(glacier_epsg)
+        coastal_geoms_epsg = coastal_geoms.to_crs(epsg=glacier_epsg)
+
+        coastal_geoms_epsg = coastal_geoms_epsg.geometry.explode(index_parts=True)
 
         # Extract all coordinates of GeoSeries geometries (0.02 s)
-        geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in box_geoms_epsg.geometry.exterior])
+        geoms_coords_array = np.concatenate([np.array(geom.coords) for geom in coastal_geoms_epsg.geometry.exterior])
 
         # Reprojecting very big geometries cause distortion. Let's remove these points. (0.008s)
         # Is this necessary ?
@@ -2322,30 +2260,27 @@ def populate_glacier_with_metadata(glacier_name,
         valid_coords = geoms_coords_array[valid_coords_mask]
 
         #fig, ax = plt.subplots()
-        #box_geoms_epsg.plot(ax=ax, linestyle='-', linewidth=1, facecolor='none', edgecolor='k')
+        #coastal_geoms_epsg.plot(ax=ax, linestyle='-', linewidth=1, facecolor='none', edgecolor='k')
         #geoseries_points_epsg.plot(ax=ax, c='k', markersize=2)
         #plt.show()
 
-        # using pykdtree.kdtree.KDTree
         kdtree_ocean = pykdtree.kdtree.KDTree(valid_coords)
-
-        distances_ocean, _ = kdtree_ocean.query(points_coords_array, k=len(box_geoms))
-        if distances_ocean.ndim == 1: distances_ocean = distances_ocean.reshape(-1, 1)
-        min_distances_ocean = np.min(distances_ocean, axis=1)
-        min_distances_ocean /= 1000.
+        distances_ocean, _ = kdtree_ocean.query(points_coords_array, k=1)
+        assert distances_ocean.ndim == 1, "Bad ocean distances vector."
+        min_distances_ocean = distances_ocean / 1000.
 
         points_df['dist_from_ocean'] = min_distances_ocean
 
     plot_dist_from_ocean = False
     if plot_dist_from_ocean:
         fig, ax = plt.subplots(figsize=(8, 7))
-        ax.scatter(geoms_coords_array[:, 0], geoms_coords_array[:, 1], s=1)
+        ax.scatter(geoms_coords_array[:, 0], geoms_coords_array[:, 1], s=1, c='k')
         ax.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='r')  # first entry is outside border
         for geom in geoseries_geometries_epsg.loc[1:]:
             ax.plot(*geom.xy, lw=1, c='grey')
         s1 = ax.scatter(x=points_coords_array[:, 0], y=points_coords_array[:, 1], s=1, c=points_df['dist_from_ocean'], zorder=0)
         cbar = plt.colorbar(s1, ax=ax)
-        cbar.set_label('Distance to closest ice free region (km)', labelpad=15, rotation=90, fontsize=16)
+        cbar.set_label('Distance to ocean (km)', labelpad=15, rotation=90, fontsize=16)
         ax.set_xlabel('Eastings (m)', fontsize=16)
         ax.set_ylabel('Northings (m)', fontsize=16)
         ax.tick_params(axis='both', labelsize=16)
