@@ -97,7 +97,7 @@ def populate_glacier_with_metadata(glacier_name,
     area_noice = gl_df['area_icefree'].item()       # unitless
     cenLon = gl_df['cen_lon'].item()                # degrees east
     cenLat = gl_df['cen_lat'].item()                # degrees north
-    glacier_epsg = gl_df['cen_epsg'].item()         # espg (int)
+    glacier_epsg = gl_df['cen_epsg'].item()         # epsg (int)
     glacier_lmax = gl_df['lmax'].item()             # m
 
     print(f"Glacier {glacier_name} found. Lat: {cenLat}, Lon: {cenLon}") if verbose else None
@@ -176,7 +176,11 @@ def populate_glacier_with_metadata(glacier_name,
         if config.mode_point_generation == 'random':
             points = generate_points(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_cluster)
         elif config.mode_point_generation == 'grid':
-            points_df = generate_points_on_grid_min_100meter(in_points_df=points_df, gdf=cluster_geometry_4326_separate)
+            points_df = generate_points(in_points_df=points_df, gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi)
+            #points_df = generate_points_on_grid_min_100meter(in_points_df=points_df,
+            #                                                 gdf=cluster_geometry_4326_separate,
+            #                                                 epsg=glacier_epsg,
+            #                                                 region=rgi)
             #points = generate_points_on_grid(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, max_points=n_points_regression_cluster)
         else: raise ValueError("Unsupported mode for data generation.")
         gl_geom = Polygon(cluster_geometry_4326.iloc[0]) # override (we need this if we have clustered)
@@ -189,7 +193,11 @@ def populate_glacier_with_metadata(glacier_name,
             points = generate_points(gdf_ext=gl_geom_ext_gdf, gdf_nuns=gl_geom_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_single)
         elif config.mode_point_generation == 'grid':
             #points = generate_points_on_grid(gdf_ext=gl_geom_ext_gdf, gdf_nuns=gl_geom_nunataks_gdf, max_points=n_points_regression_single)
-            points_df = generate_points_on_grid_min_100meter(in_points_df=points_df, gdf=gl_df)
+            #points_df = generate_points_on_grid_min_100meter(in_points_df=points_df,
+            #                                                 gdf=gl_df,
+            #                                                 epsg=glacier_epsg,
+            #                                                 region=rgi)
+            points_df = generate_points(in_points_df=points_df, gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi)
         else: raise ValueError("Unsupported mode for data generation.")
 
     plot_gen_points = False
@@ -212,9 +220,6 @@ def populate_glacier_with_metadata(glacier_name,
     print(f"We have generated {len(points_df)} points in {tgenpoints:.3f}") if verbose else None
 
     # Fill these features
-    #points_df['lats'] = points['lats']
-    #points_df['lons'] = points['lons']
-    #points_df['nunataks'] = points['nunataks']
     if (points_df['nunataks'].sum() != 0):
         print(f"The generation pipeline has produced n. {points_df['nunataks'].sum()} points inside nunataks")
         raise ValueError
@@ -1369,8 +1374,6 @@ def populate_glacier_with_metadata(glacier_name,
 
     # Project the points onto the glacier projection
     eastings, northings = Transformer.from_crs("EPSG:4326", glacier_epsg).transform(points_df['lats'], points_df['lons'])
-    #eastings, northings, _, _, epsgx = from_lat_lon_to_utm_and_epsg(np.array(points_df['lats']),
-    #                                                            np.array(points_df['lons']))
 
     northings_xar = xarray.DataArray(northings)
     eastings_xar = xarray.DataArray(eastings)
@@ -2008,11 +2011,11 @@ def populate_glacier_with_metadata(glacier_name,
         ice_sheet_epsg = ice_sheet.to_crs(epsg=glacier_epsg)
 
         # calculate if the glacier is mostly inside the ice sheet
-        glacier_ext_espg = gl_geom_ext_gdf.to_crs(epsg=glacier_epsg)
-        intersection = glacier_ext_espg.intersection(ice_sheet_epsg)
+        glacier_ext_epsg = gl_geom_ext_gdf.to_crs(epsg=glacier_epsg)
+        intersection = glacier_ext_epsg.intersection(ice_sheet_epsg)
 
         area_intersection = intersection.area.item() * 1e-6
-        area_glacier_ext = glacier_ext_espg.area.item() * 1e-6
+        area_glacier_ext = glacier_ext_epsg.area.item() * 1e-6
 
         # decide if glacier is inside the ice sheet if area contained for at least 90%
         is_inside_ice_sheet = (area_intersection / area_glacier_ext) > 0.9
@@ -2105,7 +2108,7 @@ def populate_glacier_with_metadata(glacier_name,
         if len(geoseries_geometries_epsg)>1:
             geoseries_geometries_epsg.loc[1:].plot(ax=ax, edgecolor='orange', facecolor='none')
 
-        #glacier_ext_espg.plot(ax=ax, edgecolor='green', facecolor='none', linewidth=1, zorder=2)
+        #glacier_ext_epsg.plot(ax=ax, edgecolor='green', facecolor='none', linewidth=1, zorder=2)
 
         #geoseries_geometries_epsg.plot(ax=ax)
         #sgeom = ax.scatter(x=geoms_coords_array[:, 0], y=geoms_coords_array[:, 1], c='r', zorder=0)
@@ -2159,7 +2162,7 @@ def populate_glacier_with_metadata(glacier_name,
             # Make a check.
             easting, nothing, zonenum, zonelett, epsg = from_lat_lon_to_utm_and_epsg(lat, lon)
             if epsg != glacier_epsg:
-                print(f"Note differet UTM zones. Point espg {epsg} and glacier center epsg {glacier_epsg}.") if verbose else None
+                print(f"Note differet UTM zones. Point epsg {epsg} and glacier center epsg {glacier_epsg}.") if verbose else None
 
             # Get shapely Point
             point_epsg = geoseries_points_epsg.iloc[i]
