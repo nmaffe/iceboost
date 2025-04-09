@@ -2359,16 +2359,13 @@ def populate_glacier_with_metadata(glacier_name,
 
     # ---------------------------------------------------------------------------------------------
     """ Add features """
-    #points_df['elevation_from_Zmin'] = points_df['elevation'] - points_df['Zmin']
-    #points_df['deltaZ'] = points_df['Zmax'] - points_df['Zmin']
-    # new
     points_df['elevation_from_zmin'] = points_df['elevation'] - points_df['zmin']
     points_df['deltaz'] = points_df['zmax'] - points_df['zmin']
     # ---------------------------------------------------------------------------------------------
     """ Data imputation """
     t0_imputation = time.time()
 
-    # Data imputation for any nan survived in Millan velocities.
+    # Data imputation for any nan survived in the velocity features.
     list_vel_cols_for_imputation = ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa']
 
     median_imputer = SimpleImputer(strategy='median')
