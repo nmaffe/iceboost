@@ -1,4 +1,6 @@
 import time
+
+import rioxarray
 import utm
 import warnings
 import scipy
@@ -632,7 +634,84 @@ def plot_feature_scatter(config, test_glacier):
     plt.tight_layout()
     plt.show()
 
-def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None):
+def choose_grid_epsg(epsg_glacier=None, region=None, lat_max=None):
+    espg_grid = None
+    if region == 5:
+        espg_grid = 3413
+    elif region == 19 and lat_max < -60:
+        espg_grid = 3031
+    else:
+        espg_grid = epsg_glacier
+    assert isinstance(espg_grid, int), f"Problems with choice of projection."
+    return espg_grid
+
+def generate_points(in_points_df=None, gdf=None, epsg_glacier=None, region=None):
+
+    min_lon, min_lat, max_lon, max_lat = gdf.total_bounds
+
+    # Decide crs of grid
+    espg_grid = choose_grid_epsg(epsg_glacier=epsg_glacier, region=region, lat_max=max_lat)
+
+    # Reproject geometries to grid crs
+    gdf_grid_crs = gdf.to_crs(epsg=espg_grid)
+    minx, miny, maxx, maxy = gdf_grid_crs.total_bounds
+
+    spatial_posting = 101.
+    minimum_no_points_in_box = 1e3
+    no_glaciers_covered = -999
+    points_inside = -999
+
+    while no_glaciers_covered != len(gdf_grid_crs) and spatial_posting > 1.:
+        spatial_posting -= 1.
+
+        # Create grid coordinates
+        xs = np.arange(minx+1, maxx-1, spatial_posting)
+        ys = np.arange(miny+1, maxy-1, spatial_posting)
+        xx, yy = np.meshgrid(xs, ys)
+        Nx, Ny = len(xs), len(ys)
+        if (Nx * Ny) < minimum_no_points_in_box:
+            continue
+
+        # Create dataframe of points in bounding box
+        points_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(xx.ravel(), yy.ravel()), crs=espg_grid)
+
+        # Get only points inside the glacier(s)
+        points_inside = gpd.sjoin(points_gdf, gdf_grid_crs, predicate="within", how="inner")
+        # print(points_inside)
+
+        no_glaciers_covered = points_inside['index_right'].nunique()
+
+
+    assert not isinstance(points_inside, int), f"Problems with grid generation {gdf.index}."
+    assert no_glaciers_covered == len(gdf), "The generated grid does not cover all glaciers."
+
+    # Rename the index
+    points_inside = points_inside.rename(columns={'index_right': 'polygon_index'})
+
+    # We need to get the grid points in lat and lon
+    points_inside_4326 = points_inside.to_crs(epsg=4326)
+
+    # debug
+    #print("Final: ", spatial_posting, len(points_inside))
+    #fig, (ax1, ax2) = plt.subplots(1,2)
+    #gdf_grid_crs.plot(ax=ax1, edgecolor='black', facecolor='none')
+    #points_inside.plot(ax=ax1, marker='o', color='k', markersize=1)
+    #gdf.plot(ax=ax2, edgecolor='black', facecolor='none')
+    #points_inside_4326.plot(ax=ax2, marker='o', color='k', markersize=1)
+    #plt.show()
+
+    # Fill dataframe for output
+    in_points_df["lons"] = points_inside_4326.geometry.x.values
+    in_points_df["lats"] = points_inside_4326.geometry.y.values
+    in_points_df["east"] = points_inside.geometry.x.values
+    in_points_df["north"] = points_inside.geometry.y.values
+    in_points_df["polygon"] = points_inside.polygon_index.values
+    in_points_df["espg"] = espg_grid
+    in_points_df["nunataks"] = 0.0
+
+    return in_points_df
+
+def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None, epsg=None, region=None):
 
     #print(f"We have to generate grid points inside {len(gdf)} glacier(s)")
 
@@ -641,6 +720,7 @@ def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None):
     delta_lon = maxx - minx
     delta_lat = maxy - miny
     mean_lat = 0.5 * (miny + maxy)
+    mean_lon = 0.5 * (minx + maxx)
     #print(minx, miny, maxx, maxy)
 
     spatial_posting = 100.
@@ -679,13 +759,14 @@ def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None):
         no_glaciers_covered = points_inside['index_right'].nunique()
 
     #print(f"lat_res: {lat_res} lon_res: {lon_res} posting {spatial_posting}")
+    #print(points_inside, no_glaciers_covered)
     assert not isinstance(points_inside, int), f"Problems with grid generation {gdf.index}."
 
     # Rename the index
     points_inside = points_inside.rename(columns={'index_right': 'polygon_index'})
 
-    assert len(points_inside) > 500, "Generated too few points. Check point generation on grid."
-    assert len(points_inside) < 3e6, "Generated too many points. Not a problem but carefully check if i need so many."
+    assert len(points_inside) > 300, f"Generated too few points. Check point generation on grid: {mean_lat}-{mean_lon}"
+    assert len(points_inside) < 3e6, f"Generated too many points. Not a problem but carefully check if i need so many."
     assert no_glaciers_covered == len(gdf), "The generated grid does not cover all glaciers."
 
     #fig, ax = plt.subplots()
@@ -764,7 +845,7 @@ def generate_points_on_grid(gdf_ext=None, gdf_nuns=None, max_points=None):
     return points
 
 
-def generate_points(gdf_ext=None, gdf_nuns=None, n_points_regression=None, seed=None):
+def generate_points_old(gdf_ext=None, gdf_nuns=None, n_points_regression=None, seed=None):
 
     points = {'lons': [], 'lats': [], 'nunataks': []}
     if seed is not None: np.random.seed(seed)
