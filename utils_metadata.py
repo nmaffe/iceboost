@@ -96,7 +96,7 @@ def lmax_with_covex_hull(geometry, glacier_epsg):
 def lmax_imputer(geometry, glacier_epsg):
     '''
     geometry: glacier external geometry as pandas geodataframe in 4326 prjection
-    glacier_epsg: glacier espg
+    glacier_epsg: glacier epsg
     return: lmax in meters
     '''
     geometry_epsg = geometry.to_crs(epsg=glacier_epsg)
@@ -443,7 +443,7 @@ def add_regional_features(df=None):
                 lmax,    # m
                 cenLat,  # degrees north
                 cenLon,  # degrees east
-                glacier_epsg)  # espg
+                glacier_epsg)  # epsg
 
     # apply the function and unpack results
     results = np.array(df['geometry'].apply(calc_feats).to_list())
@@ -635,25 +635,25 @@ def plot_feature_scatter(config, test_glacier):
     plt.show()
 
 def choose_grid_epsg(epsg_glacier=None, region=None, lat_max=None):
-    espg_grid = None
+    epsg_grid = None
     if region == 5:
-        espg_grid = 3413
+        epsg_grid = 3413
     elif region == 19 and lat_max < -60:
-        espg_grid = 3031
+        epsg_grid = 3031
     else:
-        espg_grid = epsg_glacier
-    assert isinstance(espg_grid, int), f"Problems with choice of projection."
-    return espg_grid
+        epsg_grid = epsg_glacier
+    assert isinstance(epsg_grid, int), f"Problems with choice of projection."
+    return epsg_grid
 
 def generate_points(in_points_df=None, gdf=None, epsg_glacier=None, region=None):
 
     min_lon, min_lat, max_lon, max_lat = gdf.total_bounds
 
     # Decide crs of grid
-    espg_grid = choose_grid_epsg(epsg_glacier=epsg_glacier, region=region, lat_max=max_lat)
+    epsg_grid = choose_grid_epsg(epsg_glacier=epsg_glacier, region=region, lat_max=max_lat)
 
     # Reproject geometries to grid crs
-    gdf_grid_crs = gdf.to_crs(epsg=espg_grid)
+    gdf_grid_crs = gdf.to_crs(epsg=epsg_grid)
     minx, miny, maxx, maxy = gdf_grid_crs.total_bounds
 
     spatial_posting = 101.
@@ -673,7 +673,7 @@ def generate_points(in_points_df=None, gdf=None, epsg_glacier=None, region=None)
             continue
 
         # Create dataframe of points in bounding box
-        points_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(xx.ravel(), yy.ravel()), crs=espg_grid)
+        points_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(xx.ravel(), yy.ravel()), crs=epsg_grid)
 
         # Get only points inside the glacier(s)
         points_inside = gpd.sjoin(points_gdf, gdf_grid_crs, predicate="within", how="inner")
@@ -706,7 +706,7 @@ def generate_points(in_points_df=None, gdf=None, epsg_glacier=None, region=None)
     in_points_df["east"] = points_inside.geometry.x.values
     in_points_df["north"] = points_inside.geometry.y.values
     in_points_df["polygon"] = points_inside.polygon_index.values
-    in_points_df["espg"] = espg_grid
+    in_points_df["epsg"] = epsg_grid
     in_points_df["nunataks"] = 0.0
 
     return in_points_df
