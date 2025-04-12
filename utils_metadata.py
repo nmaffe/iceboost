@@ -472,8 +472,12 @@ def get_glacier_geometries_4326(ids=None, glacier_geo_df=None, version=None):
     else:
         raise ValueError("Version not supported.")
 
-    glacier_geometries = glacier_geo_df.loc[glacier_geo_df[name_column_id].isin(ids), 'geometry']
-    glacier_geometries = glacier_geometries.to_crs("EPSG:4326")
+    # Extract id and geometry
+    glacier_geometries = glacier_geo_df.loc[glacier_geo_df[name_column_id].isin(ids), [name_column_id, 'geometry']]
+    # Set the glacier id as the dataframe index
+    glacier_geometries = glacier_geometries.set_index(name_column_id).rename_axis('polygon')
+
+    assert glacier_geometries.crs == "EPSG:4326", "Unexpected projection in get_glacier_geometries_4326 method."
     assert len(glacier_geometries) > 0, "Geometries not found."
 
     return glacier_geometries
@@ -645,7 +649,7 @@ def choose_grid_epsg(epsg_glacier=None, region=None, lat_max=None):
     assert isinstance(epsg_grid, int), f"Problems with choice of projection."
     return epsg_grid
 
-def generate_points(in_points_df=None, gdf=None, epsg_glacier=None, region=None):
+def generate_points(gdf=None, epsg_glacier=None, region=None):
 
     min_lon, min_lat, max_lon, max_lat = gdf.total_bounds
 
@@ -686,7 +690,10 @@ def generate_points(in_points_df=None, gdf=None, epsg_glacier=None, region=None)
     assert no_glaciers_covered == len(gdf), "The generated grid does not cover all glaciers."
 
     # Rename the index
-    points_inside = points_inside.rename(columns={'index_right': 'polygon_index'})
+    points_inside = points_inside.rename(columns={'index_right': 'polygon'})
+
+    # Keep only the geometries and the glacier ids
+    points_inside = points_inside[['geometry', 'polygon']]
 
     # We need to get the grid points in lat and lon
     points_inside_4326 = points_inside.to_crs(epsg=4326)
@@ -700,16 +707,17 @@ def generate_points(in_points_df=None, gdf=None, epsg_glacier=None, region=None)
     #points_inside_4326.plot(ax=ax2, marker='o', color='k', markersize=1)
     #plt.show()
 
-    # Fill dataframe for output
-    in_points_df["lons"] = points_inside_4326.geometry.x.values
-    in_points_df["lats"] = points_inside_4326.geometry.y.values
-    in_points_df["east"] = points_inside.geometry.x.values
-    in_points_df["north"] = points_inside.geometry.y.values
-    in_points_df["polygon"] = points_inside.polygon_index.values
-    in_points_df["epsg"] = epsg_grid
-    in_points_df["nunataks"] = 0.0
+    # Add lats and lons
+    points_inside["lons"] = points_inside_4326.geometry.x.values
+    points_inside["lats"] = points_inside_4326.geometry.y.values
 
-    return in_points_df
+    # Store grid resolution in meters
+    points_inside.attrs["grid_resolution"] = spatial_posting
+
+    # reset index
+    points_inside = points_inside.reset_index(drop=True)
+
+    return points_inside
 
 def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None, epsg=None, region=None):
 
