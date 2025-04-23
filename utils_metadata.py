@@ -390,6 +390,11 @@ def get_rgi_products(region=None, version=None, add_glacier_shp_file=None, add_g
         rgi_glaciers_user_input = gpd.read_file(add_glacier_shp_file, engine='pyogrio')
         rgi_intersects_user_input = gpd.read_file(add_glacier_intersects_shp_file, engine='pyogrio')
 
+        if not rgi_glaciers_user_input.crs == "EPSG:4326":
+            rgi_glaciers_user_input = rgi_glaciers_user_input.to_crs("EPSG:4326")
+        if not rgi_intersects_user_input.crs == "EPSG:4326":
+            rgi_intersects_user_input = rgi_intersects_user_input.to_crs("EPSG:4326")
+
         assert set(rgi_glaciers_user_input.columns).issubset(rgi_glaciers.columns), \
             "Incompatible concatenation with custom glacier dataframes"
         assert set(rgi_intersects_user_input.columns).issubset(rgi_intersects.columns), \
