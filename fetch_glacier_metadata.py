@@ -54,9 +54,6 @@ def populate_glacier_with_metadata(glacier_name,
 
     print(f"******* FETCHING FEATURES FOR GLACIER {glacier_name} *******") if verbose else None
 
-    # Feature dataframe
-    points_df = pd.DataFrame(columns=['lons', 'lats', 'nunataks'])
-
     tin=time.time()
 
     # unpack config
@@ -176,7 +173,8 @@ def populate_glacier_with_metadata(glacier_name,
         if config.mode_point_generation == 'random':
             points = generate_points(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_cluster)
         elif config.mode_point_generation == 'grid':
-            points_df = generate_points(in_points_df=points_df, gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi)
+            #points_df = generate_points(in_points_df=points_df, gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi)
+            points_df = generate_points(gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi)
             #points_df = generate_points_on_grid_min_100meter(in_points_df=points_df,
             #                                                 gdf=cluster_geometry_4326_separate,
             #                                                 epsg=glacier_epsg,
@@ -197,7 +195,8 @@ def populate_glacier_with_metadata(glacier_name,
             #                                                 gdf=gl_df,
             #                                                 epsg=glacier_epsg,
             #                                                 region=rgi)
-            points_df = generate_points(in_points_df=points_df, gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi)
+            #points_df = generate_points(in_points_df=points_df, gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi)
+            points_df = generate_points(gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi)
         else: raise ValueError("Unsupported mode for data generation.")
 
     plot_gen_points = False
@@ -220,9 +219,6 @@ def populate_glacier_with_metadata(glacier_name,
     print(f"We have generated {len(points_df)} points in {tgenpoints:.3f}") if verbose else None
 
     # Fill these features
-    if (points_df['nunataks'].sum() != 0):
-        print(f"The generation pipeline has produced n. {points_df['nunataks'].sum()} points inside nunataks")
-        raise ValueError
     points_df['RGI'] = rgi
     if cluster_data is not False:
         points_df['Area']       = cluster_area      # km^2
@@ -2154,35 +2150,6 @@ def populate_glacier_with_metadata(glacier_name,
         td2 = time.time()
         print(f"Distances using pandas distance and multicpu {td2 - td1}") if verbose else None
 
-    # Method 4: not verctorized version (exact method but very slow)
-    run_method_not_vectorized = False
-    if run_method_not_vectorized:
-        for (i, lon, lat, nunatak) in zip(points_df.index, points_df['lons'], points_df['lats'], points_df['nunataks']):
-
-            # Make a check.
-            easting, nothing, zonenum, zonelett, epsg = from_lat_lon_to_utm_and_epsg(lat, lon)
-            if epsg != glacier_epsg:
-                print(f"Note differet UTM zones. Point epsg {epsg} and glacier center epsg {glacier_epsg}.") if verbose else None
-
-            # Get shapely Point
-            point_epsg = geoseries_points_epsg.iloc[i]
-
-            # Calculate the distances between such point and all glacier geometries
-            min_distances_point_geometries = geoseries_geometries_epsg.distance(point_epsg)
-            min_dist = np.min(min_distances_point_geometries) # unit UTM: m
-
-            # To debug we want to check what point corresponds to the minimum distance.
-            debug_distance = False
-            if debug_distance:
-                min_distance_index = min_distances_point_geometries.idxmin()
-                nearest_line = geoseries_geometries_epsg.loc[min_distance_index]
-                nearest_point_on_line = nearest_line.interpolate(nearest_line.project(point_epsg))
-                # print(f"{i} Minimum distance: {min_dist:.2f} meters.")
-
-            # Fill dataset
-            # note that the generated points cannot be in nunataks so distances are well defined
-            points_df.loc[i, 'dist_from_border_km_geom'] = min_dist/1000.
-
 
     points_df['dist_from_border_km_geom'] = min_distances
     points_df['Cluster_geometries'] = no_geometries_in_cluster
@@ -2295,74 +2262,11 @@ def populate_glacier_with_metadata(glacier_name,
     tdistocean = tdistocean1 - tdistocean0
     print(f"Finished distance from ocean calculations.") if verbose else None
 
-    # Show the result
-    show_glacier_with_produced_points = False
-    if show_glacier_with_produced_points:
-        fig, axes = plt.subplots(2,3, figsize=(10,8))
-        ax1, ax2, ax3, ax4, ax5, ax6 = axes.flatten()
-        for ax in (ax1, ax2):
-            ax.plot(*gl_geom_ext.exterior.xy, lw=1, c='red')
-            for interior in gl_geom.interiors:
-                ax.plot(*interior.xy, lw=1, c='blue')
-            for (lon, lat, nunatak) in zip(points_df['lons'], points_df['lats'], points_df['nunataks']):
-                if nunatak: ax.scatter(lon, lat, s=50, lw=2, c='magenta', zorder=2)
-                else: ax.scatter(lon, lat, s=50, lw=2, c='r', ec='r', zorder=1)
-
-        # slope_lat
-        im1 = dz_dlat_xar.plot(ax=ax1, cmap='gist_gray', vmin=np.nanmin(slope_lat_data),
-                                  vmax=np.nanmax(slope_lat_data), zorder=0)
-        s1 = ax1.scatter(x=lons_xar, y=lats_xar, s=50, c=slope_lat_data, ec=None, cmap='gist_gray',
-                         vmin=np.nanmin(slope_lat_data), vmax=np.nanmax(slope_lat_data), zorder=1)
-
-        # elevation
-        im2 = focus.plot(ax=ax2, cmap='gist_gray', vmin=np.nanmin(elevation_data),
-                                  vmax=np.nanmax(elevation_data), zorder=0)
-        s2 = ax2.scatter(x=lons_xar, y=lats_xar, s=50, c=elevation_data, ec=None, cmap='gist_gray',
-                         vmin=np.nanmin(elevation_data), vmax=np.nanmax(elevation_data), zorder=1)
-
-        # vx
-        if no_millan_data is False:
-            im3 = focus_vx.plot(ax=ax3, cmap='viridis', vmin=np.nanmin(vx_data), vmax=np.nanmax(vx_data))
-            s3 = ax3.scatter(x=lons_crs, y=lats_crs, s=50, c=vx_data, ec=(1, 0, 0, 1), cmap='viridis',
-                             vmin=np.nanmin(vx_data), vmax=np.nanmax(vx_data), zorder=1)
-            s3_1 = ax3.scatter(x=lons_crs[np.argwhere(np.isnan(vx_data))], y=lats_crs[np.argwhere(np.isnan(vx_data))], s=50,
-                               c='magenta', zorder=1)
-
-        # farinotti
-        if points_df['ith_f'].isna().all() is False:
-            im4 = file_glacier_farinotti.plot(ax=ax4, cmap='inferno', vmin=np.nanmin(file_glacier_farinotti),
-                                              vmax=np.nanmax(file_glacier_farinotti))
-            s4 = ax4.scatter(x=lons_crs_f, y=lats_crs_f, s=50, c=ith_f_data, ec=(1, 0, 0, 1), cmap='inferno',
-                             vmin=np.nanmin(file_glacier_farinotti), vmax=np.nanmax(file_glacier_farinotti), zorder=1)
-            s4_1 = ax4.scatter(x=lons_crs_f[np.argwhere(np.isnan(ith_f_data))],
-                               y=lats_crs_f[np.argwhere(np.isnan(ith_f_data))], s=50, c='magenta', zorder=2)
-
-        # distance
-        if multipolygon:
-            for i_poly in range(num_multipoly):
-                ax5.plot(*geoseries_geometries_epsg.loc[i_poly].xy, lw=1, c='red')  # first num_multipoly are outside borders
-            for inter in geoseries_geometries_epsg.loc[num_multipoly:]:  # all interiors if present
-                ax5.plot(*inter.xy, lw=1, c='blue')
-        else:
-            ax5.plot(*geoseries_geometries_epsg.loc[0].xy, lw=1, c='red')  # first entry is outside border
-            for inter in geoseries_geometries_epsg.loc[1:]:  # all interiors if present
-                ax5.plot(*inter.xy, lw=1, c='blue')
-
-        ax5.scatter(x=geoseries_points_epsg.x, y=geoseries_points_epsg.y, s=5, lw=2, cmap='cividis',
-                    c=points_df['dist_from_border_km_geom'],  vmin=points_df['dist_from_border_km_geom'].min(),
-                    vmax=points_df['dist_from_border_km_geom'].max())
-
-        ax6.axis('off')
-
-        for ax in (ax1, ax2, ax3, ax4, ax5, ax6):
-            ax.axis("off")
-
-        plt.tight_layout()
-        plt.show()
 
     # ---------------------------------------------------------------------------------------------
     """ Add features """
     points_df['elevation_from_zmin'] = points_df['elevation'] - points_df['zmin']
+    points_df['elevation_to_zmax'] =  points_df['zmax'] - points_df['elevation']
     points_df['deltaz'] = points_df['zmax'] - points_df['zmin']
     # ---------------------------------------------------------------------------------------------
     """ Data imputation """
@@ -2445,17 +2349,6 @@ def populate_glacier_with_metadata(glacier_name,
     print(f"Important: we have generated {points_df['ith_m'].isna().sum()} points where Millan ith is nan.") if verbose else None
     print(f"Important: we have generated {points_df['ith_f'].isna().sum()} points where Farinotti ith is nan.") if verbose else None
 
-    '''    fig, (ax1, ax2, ax3) = plt.subplots(1,3)
-        s1 = ax1.scatter(x=points_df['lons'], y=points_df['lats'], c=points_df['elevation'], s=1)
-        s2 = ax2.scatter(x=points_df['lons'], y=points_df['lats'], c=points_df['slope50'], s=1)
-        s3 = ax3.scatter(x=points_df['lons'], y=points_df['lats'], c=points_df['curv_450'], s=1)
-        cb1 = plt.colorbar(s1)
-        cb2 = plt.colorbar(s2)
-        cb3 = plt.colorbar(s3)
-        for ax in (ax1, ax2, ax3):
-            ax.tick_params(labelbottom=False, labelleft=False)
-        plt.show()
-    '''
     # Sanity check
     # The only survived nans should be only in ith_m, ith_f
     # Check for the presence of nans in the generated dataset.
