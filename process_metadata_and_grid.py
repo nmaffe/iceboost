@@ -35,8 +35,11 @@ RUTH_FOLDER = "/media/maffe/nvme/additional_glacier_ice_thickness_data/ruth_glac
 RUTH_FILE = "ruth_glacier_ice_thick_train_iceboost.csv"
 PATAGONIA_FOLDER = "/media/maffe/nvme/additional_glacier_ice_thickness_data/patagonia/"
 PATAGONIA_FILE = "patagonia_ice_thick_train_iceboost.csv"
+JOSTEDALSBREEN_FOLDER = "/media/maffe/nvme/additional_glacier_ice_thickness_data/jostedalsbreen/"
+JOSTEDALSBREEN_FILE = "jostedalsbreen_ice_thick_train_iceboost.csv"
+PATAGONIA_FILE = "patagonia_ice_thick_train_iceboost.csv"
 POLAR_FOLDER = "/media/maffe/nvme/polar_ice_thickness_data/"
-POLAR_FILE = "polar_ice_thick_train_iceboost3.parquet"
+POLAR_FILE = "polar_ice_thick_train_iceboost4.parquet"
 
 # save options
 OUT_SAVE_FOLDER = "/media/maffe/nvme/iceboost_train_dataset"
@@ -50,13 +53,14 @@ ruth = pd.read_csv(f"{RUTH_FOLDER}{RUTH_FILE}", low_memory=False)
 ruth['THICKNESS'] = ruth['THICKNESS'].astype(float)
 patagonia = pd.read_csv(f"{PATAGONIA_FOLDER}{PATAGONIA_FILE}", low_memory=False)
 patagonia['THICKNESS'] = patagonia['THICKNESS'].astype(float)
+jostedalsbreen = pd.read_csv(f"{JOSTEDALSBREEN_FOLDER}{JOSTEDALSBREEN_FILE}", low_memory=False)
 
 glathida = pd.read_csv(f"{GLATHIDA_FOLDER}{GLATHIDA_FILE}", low_memory=False)
 glathida['THICKNESS'] = glathida['THICKNESS'].astype(float)
 
 print(f"Glathida: {len(glathida)}")
-glathida = pd.concat([glathida, ruth, patagonia], axis=0, ignore_index=True)
-print(f"Glathida with Ruth and Patagonia joining the party: {len(glathida)}")
+glathida = pd.concat([glathida, ruth, patagonia, jostedalsbreen], axis=0, ignore_index=True)
+print(f"Glathida with Ruth, Patagonia, and Jostedalsbreen joining the party: {len(glathida)}")
 
 # This glacier has a factor 10 too much.
 glathida.loc[glathida['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
@@ -64,6 +68,7 @@ glathida.loc[glathida['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
 # Remove glaciers containing bad data (id, min, max)
 bad_data_to_remove = [
     ('RGI60-03.02756', 1, np.nan),
+    ('RGI60-03.01383', np.nan, np.nan),
     ('RGI60-04.05541', 7, np.nan),
     ('RGI60-04.05595', 15, np.nan),
     ('RGI60-05.00808', np.nan, 300),
@@ -166,7 +171,6 @@ print(f"Unique ids: {len(glathida['RGIId'].unique())}")
 
 
 # A.2 Keep only these columns
-cols_not_used = ['Zmin', 'Zmax', 'Zmed', 'Slope', 'Lmax', 'Form', 'Aspect', 'TermType',]
 cols = ['RGI', 'RGIId', 'POINT_LAT', 'POINT_LON', 'THICKNESS', 'Area', 'Area_icefree', 'Perimeter',
         'elevation', 'dmdtda_hugo', 'smb', 'dist_from_border_km_geom', 'ith_m', 'ith_f',
         'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
@@ -382,6 +386,16 @@ glathida_gridded['deltaz'] = glathida_gridded['zmax'] - glathida_gridded['zmin']
 # Remove all nans from all features except for ith_m and ith_f
 glathida_gridded = glathida_gridded.dropna(subset=cols_dropna)
 #print(glathida_gridded.isna().sum().T)
+
+print("before patagonia removal", len(glathida_gridded))
+# Some additional post-processing: we remove shallow measurements in the northern SPI in patagonia
+glathida_gridded = glathida_gridded[~(
+    (glathida_gridded['RGI'].isin([17])) &
+    (glathida_gridded['POINT_LAT'] < -48.27) &
+    (glathida_gridded['POINT_LAT'] > -50.0) &
+    (glathida_gridded['THICKNESS'] < 500)
+)]
+glathida_gridded = glathida_gridded[~glathida_gridded['RGIId'].isin(['RGI60-17.05181'])] # Pio XI
 
 print(f"Finished. No. original measurements {len(glathida)} down to {len(glathida_gridded)}, divided into:")
 print(f"{glathida_gridded['RGI'].value_counts()}")
