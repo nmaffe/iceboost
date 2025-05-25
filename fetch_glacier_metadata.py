@@ -60,6 +60,7 @@ def populate_glacier_with_metadata(glacier_name,
     n_points_regression_single = config.n_points_regression_single
     n_points_regression_cluster = config.n_points_regression_cluster
     graph_max_layer_depth = config.graph_max_layer_depth
+    resolution = config.resolutionXY
 
     rgi = int(rgi)
 
@@ -174,7 +175,7 @@ def populate_glacier_with_metadata(glacier_name,
             points = generate_points(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_cluster)
         elif config.mode_point_generation == 'grid':
             #points_df = generate_points(in_points_df=points_df, gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi)
-            points_df = generate_points(gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi)
+            points_df = generate_points(gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi, resolution=resolution)
             #points_df = generate_points_on_grid_min_100meter(in_points_df=points_df,
             #                                                 gdf=cluster_geometry_4326_separate,
             #                                                 epsg=glacier_epsg,
@@ -196,7 +197,7 @@ def populate_glacier_with_metadata(glacier_name,
             #                                                 epsg=glacier_epsg,
             #                                                 region=rgi)
             #points_df = generate_points(in_points_df=points_df, gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi)
-            points_df = generate_points(gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi)
+            points_df = generate_points(gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi, resolution=resolution)
         else: raise ValueError("Unsupported mode for data generation.")
 
     plot_gen_points = False
