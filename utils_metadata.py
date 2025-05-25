@@ -654,7 +654,7 @@ def choose_grid_epsg(epsg_glacier=None, region=None, lat_max=None):
     assert isinstance(epsg_grid, int), f"Problems with choice of projection."
     return epsg_grid
 
-def generate_points(gdf=None, epsg_glacier=None, region=None):
+def generate_points(gdf=None, epsg_glacier=None, region=None, resolution=None):
 
     min_lon, min_lat, max_lon, max_lat = gdf.total_bounds
 
@@ -665,7 +665,7 @@ def generate_points(gdf=None, epsg_glacier=None, region=None):
     gdf_grid_crs = gdf.to_crs(epsg=epsg_grid)
     minx, miny, maxx, maxy = gdf_grid_crs.total_bounds
 
-    spatial_posting = 101.
+    spatial_posting = resolution + 1
     minimum_no_points_in_box = 1e3
     no_glaciers_covered = -999
     points_inside = -999
