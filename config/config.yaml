@@ -1,12 +1,15 @@
 # paths and files
 tandemx_dir: '/media/maffe/nvme/Tandem-X-EDEM/'
-oggm_dir: '/home/maffe/OGGM/' # likely delete
+# oggm_dir: '/home/maffe/OGGM/' # likely delete
 coastlines_gshhg_dir: '/media/maffe/nvme/gshhg/'
-racmo_dir: '/media/maffe/nvme/racmo/'
+racmo_file_nc_greenland: '/media/maffe/nvme/racmo/greenland_racmo2.3p2/smb_greenland_mean_1961_1990_RACMO23p2_gf.nc'
+racmo_file_nc_antarctica: '/media/maffe/nvme/racmo/antarctica_racmo2.3p2/2km/smb_antarctica_mean_1979_2021_RACMO23p2_gf.nc'
 ERA5_t2m_dir: '/media/maffe/nvme/ERA5/'
 link_ids_rgi6_rgi7_csv: '/media/maffe/nvme/link_ids_rgi_7_62/link_ids_rgi_7_62.csv'
 ice_sheet_boundary_greenland_shp: '/media/maffe/nvme/ice_sheet_grounded_ice_shp/greenland/greenland_is_3413.shp'
 ice_sheet_boundary_antarctica_shp: '/media/maffe/nvme/ice_sheet_grounded_ice_shp/antarctica/antarctica_is_3031.shp'
+ice_sheet_coastlines_antarctica_gpkg: '/media/maffe/nvme/ice_sheet_coastlines_gpkg/antarctica_coastlines_3031.gpkg'
+ice_sheet_coastlines_greenland_gpkg: '/media/maffe/nvme/ice_sheet_coastlines_gpkg/greenland_coastlines_3413.gpkg'
 
 millan_velocity_dir: '/media/maffe/nvme/Millan/velocity/'
 NSIDC_velocity_Greenland_dir: '/media/maffe/nvme/Greenland_NSIDC/velocity/'
@@ -17,27 +20,35 @@ farinotti_icethickness_dir: '/media/maffe/nvme/Farinotti/composite_thickness_RGI
 NSIDC_icethickness_Greenland_dir: '/media/maffe/nvme/Greenland_NSIDC/thickness/' # BedMachine_v5
 NSIDC_icethickness_Antarctica_dir: '/media/maffe/nvme/Antarctica_NSIDC/thickness/NSIDC-0756/' # BedMachine v3
 
-model_input_dir: '/media/maffe/nvme/iceboost_model_saved/'
-#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250212/'
-#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250312/'
-model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250318/'
-#model_filename_xgb: 'iceboost_xgb_20250212.json'
-#model_filename_cat: 'iceboost_cat_20250212.cbm'
-#model_filename_xgb: 'iceboost_xgb_20250312.json'
-#model_filename_cat: 'iceboost_cat_20250312.cbm'
-model_filename_xgb: 'iceboost_xgb_20250318.json'
-model_filename_cat: 'iceboost_cat_20250318.cbm'
-#metadata_csv_file: '/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata38_hmineq1.0_tmin20050000_mean_grid_100_with_icebridge.csv'
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250212_hmineq1.0_tmin20050000_mean_grid_100.csv'
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250312_hmineq1.0_tmin20050000_mean_grid_100.csv'
-metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250318_hmineq1.0_tmin20050000_mean_grid_100.csv'
-
 # model deploy save figures
 deploy_save_figs: 0
+#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250407/'
+#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250411/'
+#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250425/'
+model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250522/'
+
+model_input_dir: '/media/maffe/nvme/iceboost_model_saved/'
+#model_filename_xgb: 'iceboost_xgb_20250407.json'
+#model_filename_cat: 'iceboost_cat_20250407.cbm'
+model_filename_xgb: 'iceboost_xgb_20250425.json'
+model_filename_cat: 'iceboost_cat_20250425.cbm'
+#model_filename_xgb: 'iceboost_xgb_20250522.json'
+#model_filename_cat: 'iceboost_cat_20250522.cbm'
+
+#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250318_hmineq1.0_tmin20050000_mean_grid_100.csv'
+#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250407_hmineq1.0_tmin20050000_mean_grid_100.csv'
+#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250411_hmineq1.0_tmin20050000_mean_grid_100.csv'
+metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250425_hmineq1.0_tmin20050000_mean_grid_100.csv'
 
 # Global deploy
-deploy_global_save_figs: 0 # save regional run figures and tif
-model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250318/'
+deploy_global_save_figs: 1 # save regional run figures and tif
+#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250318/'
+#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250407/'
+#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250411/'
+model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250425/'
+#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250413_nosize/'
+#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250522/'
+
 
 
 # model features
@@ -51,11 +62,22 @@ features:
     - *base
     - *vel
 
+resolutionXY: 100
+
 # configs for feature fetching
 graph_max_layer_depth: 3 # maximum depth consider in the graph used to calculate the glacier cluster
 deploy_mode: 'auto'               # Options: 'auto' for cluster, 'single' for single glacier
-mode_point_generation: 'grid'       # Options: 'random', 'grid'
-n_jobs: 1                           # Options: 1 for single processing, 2+ for multiprocessing
+mode_point_generation: 'grid'       # Options: 'random', 'grid'. random will not be supported anymore
+# n_jobs: 1 for single processing, 2+ for multiprocessing
+# -----------
+# rgi | n_jobs
+# 1,2 | 20
+# 3,4 | 8
+# 5   | 12
+# 8   | 8
+# 9   | 4
+# 17  | 20
+n_jobs: 8
 
 rgi_clustering_limits:
   rgi_1: {min_depth: 4, no_nodes: 15, no_edges: 20}
@@ -78,8 +100,8 @@ rgi_clustering_limits:
   rgi_18: {min_depth: 3, no_nodes: 10, no_edges: 20}
   rgi_19: {min_depth: 6, no_nodes: 44, no_edges: 75}
 
-n_points_regression_single: 30000
-n_points_regression_cluster: 200000
+n_points_regression_single: 30000 # will not be supported anymore
+n_points_regression_cluster: 200000 # will not be supported anymore
 target: 'THICKNESS'
 millan: 'ith_m'
 farinotti: 'ith_f'
