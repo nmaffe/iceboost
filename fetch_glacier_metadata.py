@@ -73,6 +73,8 @@ def populate_glacier_with_metadata(glacier_name,
     elif version == '70G':
         name_column_id = 'rgi_id'
         name_column_name = 'glac_name'
+    else:
+        raise ValueError(f"Error: id and-or version not supported.")
 
     if glacier_name not in rgi_glaciers[name_column_id].values:
         raise ValueError(f"Error: {glacier_name} not present in the glacier dataframe.")
