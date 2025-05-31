@@ -610,7 +610,7 @@ def get_version_and_rgi_from_id(id):
     return rgi, version_rgi
 
 
-def plot_feature_scatter(config, test_glacier):
+def plot_feature_scatter(feats, test_glacier):
     """
     Plot scatter plots for features in the given configuration against the glacier data.
 
@@ -619,7 +619,6 @@ def plot_feature_scatter(config, test_glacier):
     - test_glacier: A DataFrame containing 'lons', 'lats', and feature data.
 
     """
-    feats = config.features
     num_feats = len(feats)  # Number of features
     cols = 6
     rows = (num_feats // cols) + (num_feats % cols > 0)
