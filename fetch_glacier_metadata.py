@@ -57,8 +57,6 @@ def populate_glacier_with_metadata(glacier_name,
     tin=time.time()
 
     # unpack config
-    n_points_regression_single = config.n_points_regression_single
-    n_points_regression_cluster = config.n_points_regression_cluster
     graph_max_layer_depth = config.graph_max_layer_depth
     resolution = config.resolutionXY
 
@@ -173,34 +171,14 @@ def populate_glacier_with_metadata(glacier_name,
     if cluster_data is not False:
         #print(f"Running on cluster: {list_cluster_RGIIds}")
         print(f"Running on cluster") if verbose else None
-        if config.mode_point_generation == 'random':
-            points = generate_points(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_cluster)
-        elif config.mode_point_generation == 'grid':
-            #points_df = generate_points(in_points_df=points_df, gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi)
-            points_df = generate_points(gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi, resolution=resolution)
-            #points_df = generate_points_on_grid_min_100meter(in_points_df=points_df,
-            #                                                 gdf=cluster_geometry_4326_separate,
-            #                                                 epsg=glacier_epsg,
-            #                                                 region=rgi)
-            #points = generate_points_on_grid(gdf_ext=cluster_ext_gdf, gdf_nuns=cluster_nunataks_gdf, max_points=n_points_regression_cluster)
-        else: raise ValueError("Unsupported mode for data generation.")
+        points_df = generate_points(gdf=cluster_geometry_4326_separate, epsg_glacier=glacier_epsg, region=rgi, resolution=resolution)
         gl_geom = Polygon(cluster_geometry_4326.iloc[0]) # override (we need this if we have clustered)
         gl_geom_ext = Polygon(gl_geom.exterior)         # override
         gl_geom_nunataks_gdf = cluster_nunataks_gdf     # override
         gl_geom_ext_gdf = cluster_ext_gdf               # override (I guess we need this)
     else:
         print(f"Running single glacier") if verbose else None
-        if config.mode_point_generation == 'random':
-            points = generate_points(gdf_ext=gl_geom_ext_gdf, gdf_nuns=gl_geom_nunataks_gdf, seed=seed, n_points_regression=n_points_regression_single)
-        elif config.mode_point_generation == 'grid':
-            #points = generate_points_on_grid(gdf_ext=gl_geom_ext_gdf, gdf_nuns=gl_geom_nunataks_gdf, max_points=n_points_regression_single)
-            #points_df = generate_points_on_grid_min_100meter(in_points_df=points_df,
-            #                                                 gdf=gl_df,
-            #                                                 epsg=glacier_epsg,
-            #                                                 region=rgi)
-            #points_df = generate_points(in_points_df=points_df, gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi)
-            points_df = generate_points(gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi, resolution=resolution)
-        else: raise ValueError("Unsupported mode for data generation.")
+        points_df = generate_points(gdf=gl_df, epsg_glacier=glacier_epsg, region=rgi, resolution=resolution)
 
     plot_gen_points = False
     if plot_gen_points:
