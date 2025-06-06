@@ -71,6 +71,7 @@ bad_data_to_remove = [
     ('RGI60-03.01383', np.nan, np.nan),
     ('RGI60-04.05541', 7, np.nan),
     ('RGI60-04.05595', 15, np.nan),
+    ('RGI60-05.00458', np.nan, np.nan),
     ('RGI60-05.00808', np.nan, 300),
     ('RGI60-05.00814', np.nan, 300),
     ('RGI60-05.01906', np.nan, 200),
@@ -396,6 +397,17 @@ glathida_gridded = glathida_gridded[~(
     (glathida_gridded['THICKNESS'] < 500)
 )]
 glathida_gridded = glathida_gridded[~glathida_gridded['RGIId'].isin(['RGI60-17.05181'])] # Pio XI
+print("after patagonia removal", len(glathida_gridded))
+
+# Bad track (I think) in Antarctic Peninsula
+glathida_gridded = glathida_gridded[~(
+    (glathida_gridded['RGI'].isin([19])) &
+    (glathida_gridded['POINT_LAT'] < -68.6) &
+    (glathida_gridded['POINT_LAT'] > -68.9) &
+    (glathida_gridded['POINT_LON'] < -66.0) &
+    (glathida_gridded['POINT_LON'] > -66.5) &
+    (glathida_gridded['THICKNESS'] > 1400)
+)]
 
 print(f"Finished. No. original measurements {len(glathida)} down to {len(glathida_gridded)}, divided into:")
 print(f"{glathida_gridded['RGI'].value_counts()}")
