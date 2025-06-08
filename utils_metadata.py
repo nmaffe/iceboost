@@ -363,12 +363,12 @@ def create_PIL_image(array, png_resolution=None):
     image_resized = image.resize((png_resolution, png_resolution), Image.Resampling.LANCZOS)
     return image_resized
 
-def get_rgi_products(region=None, version=None, add_glacier_shp_file=None, add_glacier_intersects_shp_file=None):
+def get_rgi_products(region=None, version=None, add_glacier_geom_file=None, add_glacier_intersects_geom_file=None):
     """
     :param region: rgi region 1 to 19
     :param version: rgi version '62', '70G'
-    :param add_glacier_shp_file: if this shp file is provided, it will be added to the rgi dataframe
-    :param add_glacier_intersects_shp_file: if this shp file is provided, it will be added to the rgi dataframe
+    :param add_glacier_geom_file: if this gpkg file is provided, it will be added to the rgi dataframe
+    :param add_glacier_intersects_geom_file: if this gpkg file is provided, it will be added to the rgi dataframe
     :return: regional glacier dataframe and regional graph of glacier connectivity
     """
 
@@ -386,9 +386,9 @@ def get_rgi_products(region=None, version=None, add_glacier_shp_file=None, add_g
     rgi_intersects = gpd.read_file(FILE_INTERSECTS_SHP_RGI, engine='pyogrio')
 
     # if user has provided a glacier and intersect shp files, concatenate with rgi
-    if add_glacier_shp_file is not None:
-        rgi_glaciers_user_input = gpd.read_file(add_glacier_shp_file, engine='pyogrio')
-        rgi_intersects_user_input = gpd.read_file(add_glacier_intersects_shp_file, engine='pyogrio')
+    if add_glacier_geom_file is not None:
+        rgi_glaciers_user_input = gpd.read_file(add_glacier_geom_file, engine='pyogrio')
+        rgi_intersects_user_input = gpd.read_file(add_glacier_intersects_geom_file, engine='pyogrio')
 
         if not rgi_glaciers_user_input.crs == "EPSG:4326":
             rgi_glaciers_user_input = rgi_glaciers_user_input.to_crs("EPSG:4326")
