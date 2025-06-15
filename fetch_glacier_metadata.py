@@ -1300,6 +1300,8 @@ def populate_glacier_with_metadata(glacier_name,
     # Clip the DEM in utm with the glacier geometry also in utm
     dem_glacier_utm = focus_utm.rio.clip([gl_geom_utm_polygon], glacier_epsg, drop=True, invert=False, all_touched=True)
 
+    assert not np.isnan(dem_glacier_utm.values).all(), f"Error. NaNs detected in DEM for glacier {glacier_name}"
+
     # Calculate glacier mean slope, aspect, curvature
     glacier_mean_slope_with_dem = xrspatial.slope(dem_glacier_utm).mean().item()
     glacier_mean_aspect_with_dem = xrspatial.aspect(dem_glacier_utm).mean().item()
@@ -1673,7 +1675,7 @@ def populate_glacier_with_metadata(glacier_name,
                                                        #aspect_data_50, aspect_data_300, aspect_data_af])
 
     if contains_nan:
-        raise ValueError(f"Nan detected in elevation/slope calc. Check")
+        raise ValueError(f"Nan detected in elevation/slope calc. Glacier {glacier_name}")
 
     # Add elevation min-max scaled to 0-1
     elevation_0_1 = normalized_elevation(h=elevation_data, Hmin=glacier_zmin_with_dem, Hmax=glacier_zmax_with_dem)
