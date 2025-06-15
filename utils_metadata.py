@@ -8,7 +8,7 @@ import random
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from pyproj import Proj, Transformer, Geod
+from pyproj import Proj, Transformer, Geod, CRS
 from sklearn.neighbors import KDTree
 from scipy.spatial import distance_matrix
 from shapely.geometry import Point, Polygon, LineString, MultiLineString, box
@@ -168,7 +168,7 @@ def get_cmap(name):
     return cm
 
 
-def calc_geoid_heights(lons=None, lats=None, h_wgs84=None):
+def calc_orthometric_heights(lons=None, lats=None, h_wgs84=None):
     """
     :param h_wgs84: ellipsoid height
     :return: orthometric height (Hmsl)
@@ -176,6 +176,24 @@ def calc_geoid_heights(lons=None, lats=None, h_wgs84=None):
     transformer = Transformer.from_crs("epsg:4326", "epsg:3855", always_xy=True)
     _, _, h_egm2008 = transformer.transform(lons, lats, h_wgs84)
     return h_egm2008
+
+def calc_ortho_and_geoid_heights(lons=None, lats=None, h_wgs84=None, geoid_tif=None):
+    """
+    :param h_wgs84: ellipsoid height (i.e. DEM elevation)
+    :return: orthometric height (H) and geoid height (N)
+    """
+    # Ellipsoidal input CRS
+    wgs84 = CRS.from_epsg(4979)
+    geoid_crs = CRS.from_proj4(f"+proj=latlong +datum=WGS84 +geoidgrids={geoid_tif}")
+
+    transformer = Transformer.from_crs(geoid_crs, wgs84, always_xy=True)
+
+    z = np.zeros_like(lons)
+    _, _, N = transformer.transform(lons, lats, z)
+
+    H = h_wgs84 - N
+
+    return H, N
 
 def calc_ellipsoid_heights(lons=None, lats=None, H=None):
     """
@@ -193,13 +211,12 @@ def calc_ellipsoid_heights(lons=None, lats=None, H=None):
     h_wgs84 = H + N
     return h_wgs84
 
-def calc_volume_glacier(y=None, area=0, h_egm2008=None):
-
+def calc_volume_glacier(y=None, area=0, H=None):
     '''
-    :param y1: numpy.ndarray. Ice thickness [m]
-    :param y2: numpy.ndarray. Ice thickness [m]
-    :param area: float [km2]
-    :return: volume [km3].
+    :param y: numpy.ndarray. Ice thickness [m]
+    :param area: area: float [km2]
+    :param H: numpy.ndarray. Orthometric height [m]
+    :return: volume [km3]
     '''
     #y_xgb = y1
     #y_cat = y2
@@ -224,7 +241,7 @@ def calc_volume_glacier(y=None, area=0, h_egm2008=None):
     #volume_af = np.sum(np.where(h_egm2008 - y_mean > 0, y_mean, h_egm2008)) * f
     # volume ice below sea level
     #volume_bsl = np.sum(np.where(h_egm2008 - y_mean > 0, 0.0, y_mean - h_egm2008)) * f
-    volume_bsl = np.sum(np.where(h_egm2008 - y > 0, 0.0, y - h_egm2008)) * f
+    volume_bsl = np.sum(np.where(H - y > 0, 0.0, y - H)) * f
 
     #err_points = np.std((y_xgb, y_cat), axis=0)
     err_points = 0
