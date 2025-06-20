@@ -1,15 +1,18 @@
 # paths and files
 tandemx_dir: '/media/maffe/nvme/Tandem-X-EDEM/'
-# oggm_dir: '/home/maffe/OGGM/' # likely delete
 coastlines_gshhg_dir: '/media/maffe/nvme/gshhg/'
 racmo_file_nc_greenland: '/media/maffe/nvme/racmo/greenland_racmo2.3p2/smb_greenland_mean_1961_1990_RACMO23p2_gf.nc'
 racmo_file_nc_antarctica: '/media/maffe/nvme/racmo/antarctica_racmo2.3p2/2km/smb_antarctica_mean_1979_2021_RACMO23p2_gf.nc'
 ERA5_t2m_dir: '/media/maffe/nvme/ERA5/'
+eigen6c4_tif: '/media/maffe/nvme/geoid_eigen_6c4/earth-geoid-10arcmin.tif'
 link_ids_rgi6_rgi7_csv: '/media/maffe/nvme/link_ids_rgi_7_62/link_ids_rgi_7_62.csv'
 ice_sheet_boundary_greenland_shp: '/media/maffe/nvme/ice_sheet_grounded_ice_shp/greenland/greenland_is_3413.shp'
 ice_sheet_boundary_antarctica_shp: '/media/maffe/nvme/ice_sheet_grounded_ice_shp/antarctica/antarctica_is_3031.shp'
 ice_sheet_coastlines_antarctica_gpkg: '/media/maffe/nvme/ice_sheet_coastlines_gpkg/antarctica_coastlines_3031.gpkg'
 ice_sheet_coastlines_greenland_gpkg: '/media/maffe/nvme/ice_sheet_coastlines_gpkg/greenland_coastlines_3413.gpkg'
+
+antarctic_peninsula_gpkg: '/media/maffe/nvme/antarctic_peninsula_from_bedmachinev4/antarctic_peninsula.gpkg'
+antarctic_peninsula_intersects_gpkg: '/media/maffe/nvme/antarctic_peninsula_from_bedmachinev4/antarctic_peninsula_intersects.gpkg'
 
 millan_velocity_dir: '/media/maffe/nvme/Millan/velocity/'
 NSIDC_velocity_Greenland_dir: '/media/maffe/nvme/Greenland_NSIDC/velocity/'
@@ -25,38 +28,49 @@ deploy_save_figs: 0
 #model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250407/'
 #model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250411/'
 #model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250425/'
-model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250522/'
+#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250522/'
+#model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250602/'
+model_output_results_dir: '/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_xgb_cat_20250606/'
 
 model_input_dir: '/media/maffe/nvme/iceboost_model_saved/'
 #model_filename_xgb: 'iceboost_xgb_20250407.json'
 #model_filename_cat: 'iceboost_cat_20250407.cbm'
-model_filename_xgb: 'iceboost_xgb_20250425.json'
-model_filename_cat: 'iceboost_cat_20250425.cbm'
+#model_filename_xgb: 'iceboost_xgb_20250425.json'
+#model_filename_cat: 'iceboost_cat_20250425.cbm'
 #model_filename_xgb: 'iceboost_xgb_20250522.json'
 #model_filename_cat: 'iceboost_cat_20250522.cbm'
+#model_filename_xgb: 'iceboost_xgb_20250602.json'
+#model_filename_cat: 'iceboost_cat_20250602.cbm'
+model_filename_xgb: 'iceboost_xgb_20250606.json'
+model_filename_cat: 'iceboost_cat_20250606.cbm'
 
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250318_hmineq1.0_tmin20050000_mean_grid_100.csv'
 #metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250407_hmineq1.0_tmin20050000_mean_grid_100.csv'
 #metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250411_hmineq1.0_tmin20050000_mean_grid_100.csv'
-metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250425_hmineq1.0_tmin20050000_mean_grid_100.csv'
+#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250425_hmineq1.0_tmin20050000_mean_grid_100.csv'
+metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250605_hmineq1.0_tmin20050000_mean_grid_100.csv'
 
 # Global deploy
 deploy_global_save_figs: 1 # save regional run figures and tif
-#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250318/'
 #model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250407/'
 #model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250411/'
-model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250425/'
-#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250413_nosize/'
+#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250425/'
 #model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250522/'
+#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250602/'
+#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250606/'
+model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250612/'
 
 
 
 # model features
-featuresBase: &base ['Area',  'Perimeter', 'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax',
-                'elevation', 'elevation_from_zmin', 'dist_from_border_km_geom',
+#featuresBase: &base ['Area',  'Perimeter', 'zmin', 'zmax', 'zmed', 'slope', 'aspect', 'curvature', 'lmax',
+#                'elevation', 'elevation_from_zmin', 'dist_from_border_km_geom',
+#                   'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
+#                 'curv_50',  'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa', 'dmdtda_hugo',  'deltaz',
+#                     'smb', 't2m', 'dist_from_ocean', 'Cluster_area', 'elevation_0_1', 'elevation_from_zmin', 'elevation_0_1' ]
+featuresBase: &base ['elevation', 'dist_from_border_km_geom',
                    'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
-                 'curv_50',  'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa', 'dmdtda_hugo',  'deltaz',
-                     'smb', 't2m', 'dist_from_ocean', 'Cluster_area', 'elevation_0_1']
+                 'curv_50',  'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa',
+                     'smb', 't2m', 'dist_from_ocean']
 featuresVel: &vel ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa']
 features:
     - *base
@@ -67,16 +81,14 @@ resolutionXY: 100
 # configs for feature fetching
 graph_max_layer_depth: 3 # maximum depth consider in the graph used to calculate the glacier cluster
 deploy_mode: 'auto'               # Options: 'auto' for cluster, 'single' for single glacier
-mode_point_generation: 'grid'       # Options: 'random', 'grid'. random will not be supported anymore
+
 # n_jobs: 1 for single processing, 2+ for multiprocessing
 # -----------
-# rgi | n_jobs
-# 1,2 | 20
-# 3,4 | 8
-# 5   | 12
-# 8   | 8
-# 9   | 4
-# 17  | 20
+# rgi      | n_jobs
+# 1,2,13,14,15,16,17 | 20
+# 3,4,7,8,10,11,12,18 | 8
+# 5       | 12
+# 6,9,19  | 4
 n_jobs: 8
 
 rgi_clustering_limits:
@@ -100,8 +112,6 @@ rgi_clustering_limits:
   rgi_18: {min_depth: 3, no_nodes: 10, no_edges: 20}
   rgi_19: {min_depth: 6, no_nodes: 44, no_edges: 75}
 
-n_points_regression_single: 30000 # will not be supported anymore
-n_points_regression_cluster: 200000 # will not be supported anymore
 target: 'THICKNESS'
 millan: 'ith_m'
 farinotti: 'ith_f'
