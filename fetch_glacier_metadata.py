@@ -345,6 +345,11 @@ def populate_glacier_with_metadata(glacier_name,
                 tile_vx = tile_vx.rio.clip_box(minx=minE - epsM, miny=minN - epsM, maxx=maxE + epsM, maxy=maxN + epsM)
                 tile_vy = tile_vy.rio.clip_box(minx=minE - epsM, miny=minN - epsM, maxx=maxE + epsM, maxy=maxN + epsM)
 
+                #fig, (ax1, ax2) = plt.subplots(1, 2)
+                #tile_vx.plot(ax=ax1)
+                #tile_vy.plot(ax=ax2)
+                #plt.show()
+
                 tile_vx.values = np.where((tile_vx.values == tile_vx.rio.nodata) | np.isinf(tile_vx.values),
                                           np.nan, tile_vx.values)
                 tile_vy.values = np.where((tile_vy.values == tile_vy.rio.nodata) | np.isinf(tile_vy.values),
@@ -375,7 +380,8 @@ def populate_glacier_with_metadata(glacier_name,
                 #plt.show()
 
                 # A check to see if velocity modules is as expected
-                assert float(tile_v.sum()) > 0, "tile v is not as expected."
+                #TODO: this assert seems too much for RGI2000-v7.0-G-19-00342. Check why tile_v is empty
+                assert float(tile_v.sum()) > 0, f"tile v is not as expected: glacier {glacier_name}"
 
                 """astropy"""
                 preserve_nans = False
@@ -576,7 +582,7 @@ def populate_glacier_with_metadata(glacier_name,
                 tile_v = tile_v.squeeze()
 
                 # A check to see if velocity modules is as expected
-                assert float(tile_v.sum()) > 0, "tile v is not as expected."
+                assert float(tile_v.sum()) > 0, f"tile v is not as expected: glacier {glacier_name}."
 
                 """astropy"""
                 preserve_nans = False
@@ -875,7 +881,7 @@ def populate_glacier_with_metadata(glacier_name,
             tile_v = tile_v.squeeze()
 
             # A check to see if velocity modules is as expected
-            assert float(tile_v.sum()) > 0, "tile v is not as expected."
+            assert float(tile_v.sum()) > 0, f"tile v is not as expected: glacier {glacier_name}"
 
             """astropy"""
             preserve_nans = False
@@ -1275,6 +1281,7 @@ def populate_glacier_with_metadata(glacier_name,
 
     # We now create the mosaic of the dem clipped around the glacier
     t0_load_dem = time.time()
+    #print(glacier_name)
     focus_mosaic_tiles = create_glacier_tile_dem_mosaic(minx=swlon - (deltalon + eps),
                             miny=swlat - (deltalat + eps),
                             maxx=nelon + (deltalon + eps),
