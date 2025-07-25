@@ -380,7 +380,7 @@ def populate_glacier_with_metadata(glacier_name,
                 #plt.show()
 
                 # A check to see if velocity modules is as expected
-                #TODO: this assert seems too much for RGI2000-v7.0-G-19-00342. Check why tile_v is empty
+                # TODO: this assert seems too much for RGI2000-v7.0-G-19-00342. Check why tile_v is empty
                 assert float(tile_v.sum()) > 0, f"tile v is not as expected: glacier {glacier_name}"
 
                 """astropy"""
