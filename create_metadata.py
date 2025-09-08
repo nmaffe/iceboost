@@ -45,7 +45,7 @@ Time all rgis: 239m
 5. add_dist_from_boder_using_geometries. TESTED. All rgis: 1h40m
     - Note: if a point is inside a nunatak the distance will be set to nan.
 6. add_farinotti_ith. TESTED. All rgis: 2m
-7. add_dist_from_water. 1h43m
+7. add_dist_from_water. 13m
 """
 
 parser = argparse.ArgumentParser()
@@ -2095,8 +2095,6 @@ def add_dist_from_water(glathida, path_GSHHG_folder):
             geoseries_points_4326 = gpd.GeoSeries(list_points, crs="EPSG:4326")
             geoseries_points_epsg = geoseries_points_4326.to_crs(epsg=id_epsg)
 
-            # todo: union_all is very slow and should be replaced by
-            #  is_inside_coastal_geoms = coastal_geoms_epsg.geometry.contains(points_mean_pos_epsg.geometry.iloc[0]).any()
             # Greenland
             if rgi == 5:
                 coastal_geoms = gpd.read_file(config.ice_sheet_coastlines_greenland_gpkg)  # EPSG:3413
@@ -2105,7 +2103,8 @@ def add_dist_from_water(glathida, path_GSHHG_folder):
                 coastal_geoms_epsg = coastal_geoms.to_crs(epsg=id_epsg)
 
                 points_mean_pos_epsg = gpd.GeoDataFrame(geometry=gpd.points_from_xy([lons_mean], [lats_mean]), crs="EPSG:4326").to_crs(epsg=id_epsg)
-                is_inside_coastal_geoms = points_mean_pos_epsg.geometry.iloc[0].within(coastal_geoms_epsg.union_all(method='unary'))
+                # is_inside_coastal_geoms = points_mean_pos_epsg.geometry.iloc[0].within(coastal_geoms_epsg.union_all(method='unary')) # SLOW
+                is_inside_coastal_geoms = coastal_geoms_epsg.geometry.contains(points_mean_pos_epsg.geometry.iloc[0]).any() # FAST
                 is_outside_coastal_geoms = not is_inside_coastal_geoms
                 #print(f"The points are inside: {is_inside_coastal_geoms}")
 
@@ -2123,9 +2122,10 @@ def add_dist_from_water(glathida, path_GSHHG_folder):
                 coastal_geoms_epsg = coastal_geoms.to_crs(epsg=id_epsg)
 
                 points_mean_pos_epsg = gpd.GeoDataFrame(geometry=gpd.points_from_xy([lons_mean], [lats_mean]), crs="EPSG:4326").to_crs(epsg=id_epsg)
-                is_inside_coastal_geoms = points_mean_pos_epsg.geometry.iloc[0].within(coastal_geoms_epsg.union_all(method='unary'))
+                #is_inside_coastal_geoms = points_mean_pos_epsg.geometry.iloc[0].within(coastal_geoms_epsg.union_all(method='unary')) # SLOW
+                is_inside_coastal_geoms = coastal_geoms_epsg.geometry.contains(points_mean_pos_epsg.geometry.iloc[0]).any() # FAST
                 is_outside_coastal_geoms = not is_inside_coastal_geoms
-                print(f"The points are inside: {is_inside_coastal_geoms}")
+                #print(f"The points are inside: {is_inside_coastal_geoms}")
 
             # All other regions
             else:
@@ -2133,7 +2133,8 @@ def add_dist_from_water(glathida, path_GSHHG_folder):
                 coastal_geoms = coastlines_dataframe.cx[lons_min-buffer:lons_max+buffer, lats_min-buffer:lats_max+buffer]
 
                 points_mean_pos_4326 = gpd.GeoDataFrame(geometry=gpd.points_from_xy([lons_mean], [lats_mean]), crs="EPSG:4326")
-                is_inside_coastal_geoms = points_mean_pos_4326.geometry.iloc[0].within(coastal_geoms.union_all(method='unary'))
+                # is_inside_coastal_geoms = points_mean_pos_4326.geometry.iloc[0].within(coastal_geoms.union_all(method='unary')) # SLOW
+                is_inside_coastal_geoms = coastal_geoms.geometry.contains(points_mean_pos_4326.geometry.iloc[0]).any() # FAST
                 is_outside_coastal_geoms = not is_inside_coastal_geoms
 
             if len(coastal_geoms) == 0 or is_outside_coastal_geoms:
@@ -2594,17 +2595,18 @@ if __name__ == '__main__':
         #glathida = add_smb(glathida)
         #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
         #glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'glathida38.csv'), low_memory=False)
-        #glathida = add_dist_from_boder_using_geometries(glathida,
-        #                                                add_glacier_rgi=19,
-        #                                                add_glacier_shp_file=args.add_glacier_shp_file,
-        #                                                add_glacier_intersect_shp_file=args.add_glacier_intersect_shp_file)
+        glathida = add_dist_from_boder_using_geometries(glathida,
+                                                        add_glacier_rgi=19,
+                                                        add_glacier_shp_file=args.add_glacier_shp_file,
+                                                        add_glacier_intersect_shp_file=args.add_glacier_intersect_shp_file)
         #glathida = add_dist_from_water(glathida, args.GSHHG_folder)
         #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
-        glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
+        #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
 
         if args.save:
+            pass
             #glathida.to_csv(f'{args.save_outname}.csv', index=False)
             #glathida.to_csv(f'/media/maffe/nvme/additional_glacier_ice_thickness_data/patagonia/patagonia_ice_thick_train_iceboost.csv', index=False)
-            glathida.to_csv(f'/media/maffe/nvme/additional_glacier_ice_thickness_data/jostedalsbreen/jostedalsbreen_ice_thick_train_iceboost.csv', index=False)
+            #glathida.to_csv(f'/media/maffe/nvme/additional_glacier_ice_thickness_data/jostedalsbreen/jostedalsbreen_ice_thick_train_iceboost.csv', index=False)
             #print(f"Metadata dataset saved: {args.save_outname}.csv")
         print(f'Finished in {(time.time()-t0)/60} minutes. Bye bye.')
