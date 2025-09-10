@@ -30,16 +30,17 @@ args = parser.parse_args()
 
 # Input datasets
 GLATHIDA_FOLDER = "/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/"
-GLATHIDA_FILE = "glathida43.csv"
+GLATHIDA_FILE = "glathida44.csv"
 RUTH_FOLDER = "/media/maffe/nvme/additional_glacier_ice_thickness_data/ruth_glacier/"
 RUTH_FILE = "ruth_glacier_ice_thick_train_iceboost.csv"
 PATAGONIA_FOLDER = "/media/maffe/nvme/additional_glacier_ice_thickness_data/patagonia/"
 PATAGONIA_FILE = "patagonia_ice_thick_train_iceboost.csv"
 JOSTEDALSBREEN_FOLDER = "/media/maffe/nvme/additional_glacier_ice_thickness_data/jostedalsbreen/"
 JOSTEDALSBREEN_FILE = "jostedalsbreen_ice_thick_train_iceboost.csv"
-PATAGONIA_FILE = "patagonia_ice_thick_train_iceboost.csv"
 POLAR_FOLDER = "/media/maffe/nvme/polar_ice_thickness_data/"
 POLAR_FILE = "polar_ice_thick_train_iceboost4.parquet"
+ALASKA_FOLDER = "/media/maffe/nvme/additional_glacier_ice_thickness_data/alaska/"
+ALASKA_FILE = "alaska_ice_thick_train_iceboost.csv"
 
 # save options
 OUT_SAVE_FOLDER = "/media/maffe/nvme/iceboost_train_dataset"
@@ -54,13 +55,15 @@ ruth['THICKNESS'] = ruth['THICKNESS'].astype(float)
 patagonia = pd.read_csv(f"{PATAGONIA_FOLDER}{PATAGONIA_FILE}", low_memory=False)
 patagonia['THICKNESS'] = patagonia['THICKNESS'].astype(float)
 jostedalsbreen = pd.read_csv(f"{JOSTEDALSBREEN_FOLDER}{JOSTEDALSBREEN_FILE}", low_memory=False)
+alaska = pd.read_csv(f"{ALASKA_FOLDER}{ALASKA_FILE}", low_memory=False)
 
 glathida = pd.read_csv(f"{GLATHIDA_FOLDER}{GLATHIDA_FILE}", low_memory=False)
 glathida['THICKNESS'] = glathida['THICKNESS'].astype(float)
-
 print(f"Glathida: {len(glathida)}")
-glathida = pd.concat([glathida, ruth, patagonia, jostedalsbreen], axis=0, ignore_index=True)
-print(f"Glathida with Ruth, Patagonia, and Jostedalsbreen joining the party: {len(glathida)}")
+
+# concatenate other datasets (not yet the polar one)
+glathida = pd.concat([glathida, ruth, patagonia, jostedalsbreen, alaska], axis=0, ignore_index=True)
+print(f"Glathida with Ruth, Patagonia, Jostedalsbreen and Alaska joining the party: {len(glathida)}")
 
 # This glacier has a factor 10 too much.
 glathida.loc[glathida['RGIId'] == 'RGI60-19.01406', 'THICKNESS'] /= 10.
