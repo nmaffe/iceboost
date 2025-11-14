@@ -41,13 +41,30 @@ model_input_dir: '/media/maffe/nvme/iceboost_model_saved/'
 #model_filename_cat: 'iceboost_cat_20250522.cbm'
 #model_filename_xgb: 'iceboost_xgb_20250602.json'
 #model_filename_cat: 'iceboost_cat_20250602.cbm'
-model_filename_xgb: 'iceboost_xgb_20250606.json'
-model_filename_cat: 'iceboost_cat_20250606.cbm'
+#model_filename_xgb: 'iceboost_xgb_20250606.json'
+#model_filename_cat: 'iceboost_cat_20250606.cbm'
+#model_filename_xgb: 'iceboost_xgb_20250910.json'
+#model_filename_cat: 'iceboost_cat_20250910.cbm'
+#model_filename_xgb: 'iceboost_xgb_20250927.json'
+#model_filename_cat: 'iceboost_cat_20250927.cbm'
+
+model_filename_xgb_with_v: 'iceboost_xgb_20251009_with_v.json'
+model_filename_cat_with_v: 'iceboost_cat_20251009_with_v.cbm'
+
+model_filename_xgb_without_v: 'iceboost_xgb_20251009_without_v.json'
+model_filename_cat_without_v: 'iceboost_cat_20251009_without_v.cbm'
+
+model_filename_xgb_without_v_with_lmax: 'iceboost_xgb_20251010_without_v_with_lmax.json'
+model_filename_cat_without_v_with_lmax: 'iceboost_cat_20251010_without_v_with_lmax.cbm'
+
+
 
 #metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250407_hmineq1.0_tmin20050000_mean_grid_100.csv'
 #metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250411_hmineq1.0_tmin20050000_mean_grid_100.csv'
 #metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250425_hmineq1.0_tmin20050000_mean_grid_100.csv'
-metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250605_hmineq1.0_tmin20050000_mean_grid_100.csv'
+#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250605_hmineq1.0_tmin20050000_mean_grid_100.csv'
+#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250910_hmineq1.0_tmin20050000_mean_grid_100.csv'
+metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250927_hmineq1.0_tmin20050000_mean_grid_100.csv'
 
 # Global deploy
 deploy_global_save_figs: 1 # save regional run figures and tif
@@ -57,7 +74,8 @@ deploy_global_save_figs: 1 # save regional run figures and tif
 #model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250522/'
 #model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250602/'
 #model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250606/'
-model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250612/'
+#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250612/'
+model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20251009/'
 
 
 
@@ -72,11 +90,16 @@ featuresBase: &base ['elevation', 'dist_from_border_km_geom',
                  'curv_50',  'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa',
                      'smb', 't2m', 'dist_from_ocean']
 featuresVel: &vel ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa']
+featuresBase_with_size:
+    - *base
+    - ['lmax']
 features:
     - *base
     - *vel
 
 resolutionXY: 100
+ice_velocity_threshold: 5.0 # m/yr
+area_deploy_threshold: 10 # km2
 
 # configs for feature fetching
 graph_max_layer_depth: 3 # maximum depth consider in the graph used to calculate the glacier cluster
@@ -89,7 +112,7 @@ deploy_mode: 'auto'               # Options: 'auto' for cluster, 'single' for si
 # 3,4,7,8,10,11,12,18 | 8
 # 5       | 12
 # 6,9,19  | 4
-n_jobs: 8
+n_jobs: 20
 
 rgi_clustering_limits:
   rgi_1: {min_depth: 4, no_nodes: 15, no_edges: 20}
