@@ -69,7 +69,7 @@ class CFG:
                 'elevation', 'dist_from_border_km_geom',
                    'slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa',
                  'curv_50',  'curv_100', 'curv_150', 'curv_300', 'curv_450', 'curv_gfa',
-                     'smb', 't2m', 'dist_from_ocean',]
+                     'smb', 't2m', 'dist_from_ocean', 'lmax'] # 'Area', 'lmax', 'Perimeter'
     featuresBig = featuresSmall + ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa', ]
 
     feature_human_names = {
@@ -126,7 +126,8 @@ class CFG:
     n_rounds = 100
     run_umap_tsne = False
     run_shap = False
-    features = featuresBig
+    #features = featuresBig
+    features = featuresSmall
 
 # Import the training dataset
 glathida_rgis = pd.read_csv(config.metadata_csv_file, low_memory=False)
@@ -290,9 +291,9 @@ if optune_optimize:
 
     input('Continue')
 
-stds_ML, meds_ML, slopes_ML, rmses_ML, rmses_xgb, rmses_cat, rmses_lgb = [], [], [], [], [], [], []
-stds_Mil, meds_Mil, slopes_Mil, rmses_Mil = [], [], [], []
-stds_Far, meds_Far, slopes_Far, rmses_Far = [], [], [], []
+stds_ML, meds_ML, slopes_ML, maes_ML, rmses_ML, rmses_xgb, rmses_cat, rmses_lgb = [], [], [], [], [], [], [], []
+stds_Mil, meds_Mil, slopes_Mil, maes_Mil, rmses_Mil = [], [], [], [], []
+stds_Far, meds_Far, slopes_Far, maes_Far, rmses_Far = [], [], [], [], []
 
 best_model_xgb = None
 best_model_cat = None
@@ -302,7 +303,7 @@ best_rmse = 9999
 for i in range(CFG.n_rounds):
 
     # Train, val, and test
-    train, test = create_train_test(glathida_rgis, rgi=5, full_shuffle=False, frac=0.2, seed=None)
+    train, test = create_train_test(glathida_rgis, rgi=None, full_shuffle=True, frac=0.2, seed=None)
 
     create_val = False
     if create_val:
@@ -457,23 +458,28 @@ for i in range(CFG.n_rounds):
     stds_ML.append(std_ML)
     meds_ML.append(med_ML)
     slopes_ML.append(mfit_ML)
+    maes_ML.append(mae_ML)
     rmses_ML.append(rmse_ML)
     rmses_xgb.append(rmse_xgb)
     rmses_cat.append(rmse_cat)
     #rmses_lgb.append(rmse_lgb)
+
     stds_Mil.append(std_mil)
     meds_Mil.append(med_mil)
     slopes_Mil.append(mfit_mil)
+    maes_Mil.append(mae_mil)
     rmses_Mil.append(rmse_mil)
     stds_Far.append(std_far)
     meds_Far.append(med_far)
     slopes_Far.append(mfit_far)
+    maes_Far.append(mae_far)
     rmses_Far.append(rmse_far)
 
 
 print(f"Res. medians {np.mean(meds_ML):.2f}({np.std(meds_ML):.2f}) {np.mean(meds_Mil):.2f}({np.std(meds_Mil):.2f}) {np.mean(meds_Far):.2f}({np.std(meds_Far):.2f})")
 print(f"Res. stdevs {np.mean(stds_ML):.2f}({np.std(stds_ML):.2f}) {np.mean(stds_Mil):.2f}({np.std(stds_Mil):.2f}) {np.mean(stds_Far):.2f}({np.std(stds_Far):.2f})")
 print(f"Res. slopes {np.mean(slopes_ML):.2f}({np.std(slopes_ML):.2f}) {np.mean(slopes_Mil):.2f}({np.std(slopes_Mil):.2f}) {np.mean(slopes_Far):.2f}({np.std(slopes_Far):.2f})")
+print(f"Mae {np.mean(maes_ML):.2f}({np.std(maes_ML):.2f}) {np.mean(maes_Mil):.2f}({np.std(maes_Mil):.2f}) {np.mean(maes_Far):.2f}({np.std(maes_Far):.2f})")
 print(f"Rmse {np.mean(rmses_ML):.2f}({np.std(rmses_ML):.2f}) {np.mean(rmses_Mil):.2f}({np.std(rmses_Mil):.2f}) {np.mean(rmses_Far):.2f}({np.std(rmses_Far):.2f})")
 print(f"Rmse xgb {np.mean(rmses_xgb):.2f}({np.std(rmses_xgb):.2f})")
 print(f"Rmse cat {np.mean(rmses_cat):.2f}({np.std(rmses_cat):.2f})")
@@ -485,8 +491,8 @@ print(f"At the end of cv the best rmse is {best_rmse}")
 
 if args.save_model:
     date_n_time = time.strftime("%Y%m%d", time.localtime())
-    fileout_xgb = f"{config.model_input_dir}iceboost_xgb_{date_n_time}.json"
-    fileout_cat = f"{config.model_input_dir}iceboost_cat_{date_n_time}.cbm"
+    fileout_xgb = f"{config.model_input_dir}iceboost_xgb_{date_n_time}_without_v_with_lmax.json"
+    fileout_cat = f"{config.model_input_dir}iceboost_cat_{date_n_time}_without_v_with_lmax.cbm"
     best_model_xgb.save_model(fileout_xgb)
     best_model_cat.save_model(fileout_cat, format="cbm")
     print(f'saved models {fileout_xgb} and {fileout_cat}')
@@ -670,115 +676,117 @@ if plot_spatial_test_predictions:
     #plt.savefig(f"/home/maffe/Downloads/new_figures_iceboost_paper/fig_2_supp_info.png", dpi=100)
     plt.show()
 
-# ******************************************************
-# Model deploy on 2 glaciers to evaluate discontinuities
-# ******************************************************
-two_ids = ['RGI60-13.49645', 'RGI60-13.29115']
-glacier_name_for_generation1 = get_random_glacier_rgiid(name=two_ids[0], rgi=4, version='70G', area=0, seed=None)
-glacier_name_for_generation2 = get_random_glacier_rgiid(name=two_ids[1], rgi=4, version='70G', area=0, seed=None)
+plot_two_neighboring_glaciers = False
+if plot_two_neighboring_glaciers:
+    # ******************************************************
+    # Model deploy on 2 glaciers to evaluate discontinuities
+    # ******************************************************
+    two_ids = ['RGI60-13.49645', 'RGI60-13.29115']
+    glacier_name_for_generation1 = get_random_glacier_rgiid(name=two_ids[0], rgi=4, version='70G', area=0, seed=None)
+    glacier_name_for_generation2 = get_random_glacier_rgiid(name=two_ids[1], rgi=4, version='70G', area=0, seed=None)
 
-test_glacier_rgi1, version1 = get_version_and_rgi_from_id(glacier_name_for_generation1)
-test_glacier_rgi2, version2 = get_version_and_rgi_from_id(glacier_name_for_generation2)
+    test_glacier_rgi1, version1 = get_version_and_rgi_from_id(glacier_name_for_generation1)
+    test_glacier_rgi2, version2 = get_version_and_rgi_from_id(glacier_name_for_generation2)
 
-#test_glacier_rgi1, version1 = 19, '62'
-#test_glacier_rgi2, version2 = 19, '62'
+    #test_glacier_rgi1, version1 = 19, '62'
+    #test_glacier_rgi2, version2 = 19, '62'
 
-rgi_products = get_rgi_products(region=test_glacier_rgi1,
-                                    version=version1,
-                                    add_glacier_geom_file=None, #config.antarctic_peninsula_gpkg,
-                                    add_glacier_intersects_geom_file=None)#config.antarctic_peninsula_intersects_gpkg)
-rgi_glaciers, rgi_graph = rgi_products
-rgi_glaciers = add_regional_features(rgi_glaciers)
-coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
-link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
-mbdf_rgi = get_mass_balance_df(region=test_glacier_rgi1)
+    rgi_products = get_rgi_products(region=test_glacier_rgi1,
+                                        version=version1,
+                                        add_glacier_geom_file=None, #config.antarctic_peninsula_gpkg,
+                                        add_glacier_intersects_geom_file=None)#config.antarctic_peninsula_intersects_gpkg)
+    rgi_glaciers, rgi_graph = rgi_products
+    rgi_glaciers = add_regional_features(rgi_glaciers)
+    coastline_dataframe = get_coastline_dataframe(config.coastlines_gshhg_dir)
+    link_ids_rgi6_rgi7 = pd.read_csv(config.link_ids_rgi6_rgi7_csv, index_col='rgi_id_7')
+    mbdf_rgi = get_mass_balance_df(region=test_glacier_rgi1)
 
-data_generator1  = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation1,
-                                                          config=config,
-                                                          rgi_products=rgi_products,
-                                                          rgi=test_glacier_rgi1,
-                                                          mass_balance_df=mbdf_rgi,
-                                                          version=version1,
-                                                          coastlines_dataframe=coastline_dataframe,
-                                                          link_rgi6_rg7_dataframe=link_ids_rgi6_rgi7,
-                                                          seed=42,
-                                                          verbose=True,
-                                                        )
+    data_generator1  = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation1,
+                                                              config=config,
+                                                              rgi_products=rgi_products,
+                                                              rgi=test_glacier_rgi1,
+                                                              mass_balance_df=mbdf_rgi,
+                                                              version=version1,
+                                                              coastlines_dataframe=coastline_dataframe,
+                                                              link_rgi6_rg7_dataframe=link_ids_rgi6_rgi7,
+                                                              seed=42,
+                                                              verbose=True,
+                                                            )
 
-deployed_ids1 = data_generator1.send(None)
-info1, data1 = data_generator1.send(None)
+    deployed_ids1 = data_generator1.send(None)
+    info1, data1 = data_generator1.send(None)
 
-deploy_ids1 = info1.index.tolist()
-deploy_area1 = info1['Area'].sum()
+    deploy_ids1 = info1.index.tolist()
+    deploy_area1 = info1['Area'].sum()
 
-h_wgs841 = data1['elevation'].to_numpy()
-lats1 = data1['lats'].to_numpy()
-lons1 = data1['lons'].to_numpy()
+    h_wgs841 = data1['elevation'].to_numpy()
+    lats1 = data1['lats'].to_numpy()
+    lons1 = data1['lons'].to_numpy()
 
-# We will use the deployed geometries
-glacier_geometries1 = get_glacier_geometries_4326(ids=deploy_ids1, glacier_geo_df=rgi_glaciers, version=f'{version1}')
+    # We will use the deployed geometries
+    glacier_geometries1 = get_glacier_geometries_4326(ids=deploy_ids1, glacier_geo_df=rgi_glaciers, version=f'{version1}')
 
-X_test_glacier1 = data1[CFG.features]
-dtest1 = xgb.DMatrix(data=X_test_glacier1)
-y_preds_glacier_xgb1 = best_model_xgb.predict(dtest1)
-y_preds_glacier_cat1 = best_model_cat.predict(X_test_glacier1)
-y_preds_glacier1 = 0.5 * (y_preds_glacier_xgb1 + y_preds_glacier_cat1)
-y_preds_glacier1 = np.where(y_preds_glacier1 < 0, 0, y_preds_glacier1)
+    X_test_glacier1 = data1[CFG.features]
+    dtest1 = xgb.DMatrix(data=X_test_glacier1)
+    y_preds_glacier_xgb1 = best_model_xgb.predict(dtest1)
+    y_preds_glacier_cat1 = best_model_cat.predict(X_test_glacier1)
+    y_preds_glacier1 = 0.5 * (y_preds_glacier_xgb1 + y_preds_glacier_cat1)
+    y_preds_glacier1 = np.where(y_preds_glacier1 < 0, 0, y_preds_glacier1)
 
 
-# Glacier 2
-data_generator2  = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation2,
-                                                          config=config,
-                                                          rgi_products=rgi_products,
-                                                          rgi=test_glacier_rgi2,
-                                                          mass_balance_df=mbdf_rgi,
-                                                          version=version2,
-                                                          coastlines_dataframe=coastline_dataframe,
-                                                          link_rgi6_rg7_dataframe=link_ids_rgi6_rgi7,
-                                                          seed=42,
-                                                          verbose=True,
-                                                        )
+    # Glacier 2
+    data_generator2  = populate_glacier_with_metadata(glacier_name=glacier_name_for_generation2,
+                                                              config=config,
+                                                              rgi_products=rgi_products,
+                                                              rgi=test_glacier_rgi2,
+                                                              mass_balance_df=mbdf_rgi,
+                                                              version=version2,
+                                                              coastlines_dataframe=coastline_dataframe,
+                                                              link_rgi6_rg7_dataframe=link_ids_rgi6_rgi7,
+                                                              seed=42,
+                                                              verbose=True,
+                                                            )
 
-deployed_ids2 = data_generator2.send(None)
-info2, data2 = data_generator2.send(None)
+    deployed_ids2 = data_generator2.send(None)
+    info2, data2 = data_generator2.send(None)
 
-deploy_ids2 = info2.index.tolist()
-deploy_area2 = info2['Area'].sum()
+    deploy_ids2 = info2.index.tolist()
+    deploy_area2 = info2['Area'].sum()
 
-h_wgs842 = data2['elevation'].to_numpy()
-lats2 = data2['lats'].to_numpy()
-lons2 = data2['lons'].to_numpy()
+    h_wgs842 = data2['elevation'].to_numpy()
+    lats2 = data2['lats'].to_numpy()
+    lons2 = data2['lons'].to_numpy()
 
-glacier_geometries2 = get_glacier_geometries_4326(ids=deploy_ids2, glacier_geo_df=rgi_glaciers, version=f'{version2}')
+    glacier_geometries2 = get_glacier_geometries_4326(ids=deploy_ids2, glacier_geo_df=rgi_glaciers, version=f'{version2}')
 
-X_test_glacier2 = data2[CFG.features]
-dtest2 = xgb.DMatrix(data=X_test_glacier2)
-y_preds_glacier_xgb2 = best_model_xgb.predict(dtest2)
-y_preds_glacier_cat2 = best_model_cat.predict(X_test_glacier2)
-y_preds_glacier2 = 0.5 * (y_preds_glacier_xgb2 + y_preds_glacier_cat2)
-y_preds_glacier2 = np.where(y_preds_glacier2 < 0, 0, y_preds_glacier2)
+    X_test_glacier2 = data2[CFG.features]
+    dtest2 = xgb.DMatrix(data=X_test_glacier2)
+    y_preds_glacier_xgb2 = best_model_xgb.predict(dtest2)
+    y_preds_glacier_cat2 = best_model_cat.predict(X_test_glacier2)
+    y_preds_glacier2 = 0.5 * (y_preds_glacier_xgb2 + y_preds_glacier_cat2)
+    y_preds_glacier2 = np.where(y_preds_glacier2 < 0, 0, y_preds_glacier2)
 
-datay = np.concatenate([data1['elevation_from_zmin'], data2['elevation_from_zmin']])
+    datay = np.concatenate([data1['elevation_from_zmin'], data2['elevation_from_zmin']])
 
-fig, ax = plt.subplots(figsize=(8,6))
-vmin, vmax = min(y_preds_glacier1.min(), y_preds_glacier2.min()), max(y_preds_glacier1.max(), y_preds_glacier2.max())
-s = ax.scatter(x=np.concatenate((lons1, lons2)), s=1, y=np.concatenate((lats1, lats2)), c=np.concatenate((y_preds_glacier1, y_preds_glacier2)),
-                cmap='turbo', label='ML', zorder=1, vmin=vmin,vmax=vmax)
-#s = ax.scatter(x=np.concatenate((lons1, lons2)), s=1, y=np.concatenate((lats1, lats2)), c=datay,
-#                cmap='turbo', label='ML', zorder=1, vmin=datay.min(),vmax=datay.max())
-glathida_data = glathida_rgis[glathida_rgis['RGIId'].isin(two_ids)]
-if len(glathida_data)>0:
-    s_glathida = ax.scatter(x=glathida_data['POINT_LON'], y=glathida_data['POINT_LAT'], c=glathida_data['THICKNESS'],
-                                cmap='turbo', ec='grey', lw=0.5, s=35, vmin=vmin,vmax=vmax)
-cb = plt.colorbar(s)
-geometries = pd.concat([glacier_geometries1.geometry, glacier_geometries2.geometry])
-for geometry in geometries:
-    x, y = geometry.exterior.xy
-    ax.plot(x, y, c='k', lw=1)
-    for interior in geometry.interiors:
-        x, y = interior.xy
-        ax.plot(x, y, c='k', lw=0.8)
-plt.show()
+    fig, ax = plt.subplots(figsize=(8,6))
+    vmin, vmax = min(y_preds_glacier1.min(), y_preds_glacier2.min()), max(y_preds_glacier1.max(), y_preds_glacier2.max())
+    s = ax.scatter(x=np.concatenate((lons1, lons2)), s=1, y=np.concatenate((lats1, lats2)), c=np.concatenate((y_preds_glacier1, y_preds_glacier2)),
+                    cmap='turbo', label='ML', zorder=1, vmin=vmin,vmax=vmax)
+    #s = ax.scatter(x=np.concatenate((lons1, lons2)), s=1, y=np.concatenate((lats1, lats2)), c=datay,
+    #                cmap='turbo', label='ML', zorder=1, vmin=datay.min(),vmax=datay.max())
+    glathida_data = glathida_rgis[glathida_rgis['RGIId'].isin(two_ids)]
+    if len(glathida_data)>0:
+        s_glathida = ax.scatter(x=glathida_data['POINT_LON'], y=glathida_data['POINT_LAT'], c=glathida_data['THICKNESS'],
+                                    cmap='turbo', ec='grey', lw=0.5, s=35, vmin=vmin,vmax=vmax)
+    cb = plt.colorbar(s)
+    geometries = pd.concat([glacier_geometries1.geometry, glacier_geometries2.geometry])
+    for geometry in geometries:
+        x, y = geometry.exterior.xy
+        ax.plot(x, y, c='k', lw=1)
+        for interior in geometry.interiors:
+            x, y = interior.xy
+            ax.plot(x, y, c='k', lw=0.8)
+    plt.show()
 
 
 # *********************************************
@@ -791,7 +799,7 @@ for n, glacier_name_for_generation in enumerate(all_glacier_ids):
     #    print(f"{glacier_name_for_generation} already in there.")
     #    continue
 
-    glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-13.49645', rgi=4, version='70G', area=0, seed=None)
+    glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-13.50667', rgi=4, version='70G', area=0, seed=None)
 
     # Generate points for one glacier
     test_glacier_rgi, version = get_version_and_rgi_from_id(glacier_name_for_generation)
@@ -827,7 +835,8 @@ for n, glacier_name_for_generation in enumerate(all_glacier_ids):
     h_wgs84 = data['elevation'].to_numpy()
     lats = data['lats'].to_numpy()
     lons = data['lons'].to_numpy()
-    h_egm2008 = calc_orthometric_heights(lons=lons, lats=lats, h_wgs84=h_wgs84)
+    h_ortho, n_geoid = calc_ortho_and_geoid_heights(lons=lons, lats=lats, h_wgs84=h_wgs84,
+                                                    geoid_tif=config.eigen6c4_tif)
 
     x0, y0, x1, y1 = lons.min(), lats.min(), lons.max(), lats.max()
     dx, dy = x1 - x0, y1 - y0
@@ -923,10 +932,10 @@ for n, glacier_name_for_generation in enumerate(all_glacier_ids):
         vol_farinotti_published = np.nan
 
     # Calculate the glacier volume using the 3 models
-    vol_ML, _, _ = calc_volume_glacier(y=y_preds_glacier, area=deploy_area, h_egm2008=h_egm2008)
+    vol_ML, _, _ = calc_volume_glacier(y=y_preds_glacier, area=deploy_area, H=h_ortho)
     err_vol_ML = np.sqrt(np.sum(y_preds_diff_xgb_cat**2)) * 0.001 * deploy_area / len(y_preds_diff_xgb_cat)
-    vol_millan, _, _ = calc_volume_glacier(y=y_test_glacier_m, area=deploy_area, h_egm2008=h_egm2008)
-    vol_farinotti, _, _ = calc_volume_glacier(y=y_test_glacier_f, area=deploy_area, h_egm2008=h_egm2008)
+    vol_millan, _, _ = calc_volume_glacier(y=y_test_glacier_m, area=deploy_area, H=h_ortho)
+    vol_farinotti, _, _ = calc_volume_glacier(y=y_test_glacier_f, area=deploy_area, H=h_ortho)
 
     print(f"Glacier {glacier_name_for_generation} Area: {deploy_area:.2f} km2, "
           f"volML: {vol_ML:.4g} km3 pm {err_vol_ML:.4g} km3 "
