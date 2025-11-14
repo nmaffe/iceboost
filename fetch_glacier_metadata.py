@@ -59,6 +59,7 @@ def populate_glacier_with_metadata(glacier_name,
     # unpack config
     graph_max_layer_depth = config.graph_max_layer_depth
     resolution = config.resolutionXY
+    ice_velocity_threshold = config.ice_velocity_threshold
 
     rgi = int(rgi)
 
@@ -215,16 +216,6 @@ def populate_glacier_with_metadata(glacier_name,
 
     # Calculate the adaptive filter size based on the Area value
     sigma_af_min, sigma_af_max = 100.0, 2000.0
-    # OLD
-    #try:
-    #    area_gl = points_df['Area'][0]
-    #    lmax_gl = points_df['Lmax'][0]
-    #    a = 1e6 * area_gl / (np.pi * 0.5 * lmax_gl)
-    #    sigma_af = int(min(max(a, sigma_af_min), sigma_af_max))
-    #except Exception as e:
-    #    sigma_af = sigma_af_min
-
-    # NEW (we use lmax and not Lmax from RGI)
     area_gl = points_df['Area'][0]
     lmax_gl = points_df['lmax'][0]
     a = 1e6 * area_gl / (np.pi * 0.5 * lmax_gl)
@@ -380,8 +371,9 @@ def populate_glacier_with_metadata(glacier_name,
                 #plt.show()
 
                 # A check to see if velocity modules is as expected
-                # TODO: this assert seems too much for RGI2000-v7.0-G-19-00342. Check why tile_v is empty
-                assert float(tile_v.sum()) > 0, f"tile v is not as expected: glacier {glacier_name}"
+                if not float(tile_v.sum()) > 0:
+                    print(f"tile v is all zero or nan: glacier {glacier_name}") if verbose else None # E.g. RGI2000-v7.0-G-19-00342
+                    return points_df, bedmachine_used
 
                 """astropy"""
                 preserve_nans = False
@@ -2270,18 +2262,27 @@ def populate_glacier_with_metadata(glacier_name,
     complete_velocity_missing = points_df[list_vel_cols_for_imputation].isna().all().all()
     partial_velocity_missing = points_df[list_vel_cols_for_imputation].isna().any().any()
 
+    # Here we assess the quality of the velocity feature (v50).
+    poor_velocity_coverage = points_df['v50'].mean() < ice_velocity_threshold or complete_velocity_missing or partial_velocity_missing
+
+    # Velocity imputation (however it will not be used)
+
     # 1. First level velocity imputation: glacier median
     if partial_velocity_missing and not complete_velocity_missing:
         print(f"Some or no velocity data missing. Nans found in v50: {points_df['v50'].isna().sum()}. Progressive imputation.") if verbose else None
 
-        v50_before_knn = points_df['v50']
-
-        points_df[list_vel_cols_for_imputation] = median_imputer.fit_transform(points_df[list_vel_cols_for_imputation])
+        # 1. Replace zeros with NaN
+        points_df[list_vel_cols_for_imputation] = points_df[list_vel_cols_for_imputation].replace(0, np.nan)
+        # 2. Impute per-column medians where possible
+        points_df[list_vel_cols_for_imputation] = points_df[list_vel_cols_for_imputation].apply(lambda col: col.fillna(col.median()))
+        # 3. Fill any remaining NaNs with the overall median across columns
+        overall_median = points_df[list_vel_cols_for_imputation].stack().median()
+        points_df[list_vel_cols_for_imputation] = points_df[list_vel_cols_for_imputation].fillna(overall_median)
 
         plot_velocity_field = False
         if plot_velocity_field:
             fig, (ax1, ax2) = plt.subplots(1,2)
-
+            v50_before_knn = points_df['v50']
             s1 = ax1.scatter(x=points_df['lons'], y=points_df['lats'], s=2,
                            c=v50_before_knn, norm=LogNorm(), cmap='viridis')
             ax1.scatter(x=points_df[v50_before_knn.isna()]['lons'], y=points_df[v50_before_knn.isna()]['lats'],
@@ -2375,12 +2376,14 @@ def populate_glacier_with_metadata(glacier_name,
             'Area': points_df['Area'].mean(),
             'Name': popular_names,
             'bedmachine': bedmachine_used,
+            'poor_velocity': poor_velocity_coverage,
             'vol_far': volumes_farinotti_df['vol_far']}, index=deployed_glaciers).rename_axis('ID')
     else:
         info_df = pd.DataFrame({
             'Area': cluster_data['area'],
             'Name': popular_names,
             'bedmachine': bedmachine_used,
+            'poor_velocity': poor_velocity_coverage,
             'vol_far': volumes_farinotti_df['vol_far']}, index=deployed_glaciers).rename_axis('ID')
 
     #print(info_df)
