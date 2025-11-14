@@ -352,15 +352,165 @@ def create_train_test(df, rgi=None, frac=0.1, full_shuffle=None, seed=None):
 
 def load_models(config_file):
 
-    model_xgb_filename = config_file.model_input_dir + config_file.model_filename_xgb
-    iceboost_xgb = xgb.Booster()
-    iceboost_xgb.load_model(model_xgb_filename)
+    #model_xgb_filename = config_file.model_input_dir + config_file.model_filename_xgb
+    #iceboost_xgb = xgb.Booster()
+    #iceboost_xgb.load_model(model_xgb_filename)
 
-    model_cat_filename = config_file.model_input_dir + config_file.model_filename_cat
-    iceboost_cat = cb.CatBoostRegressor()
-    iceboost_cat.load_model(model_cat_filename, format='cbm')
+    #model_cat_filename = config_file.model_input_dir + config_file.model_filename_cat
+    #iceboost_cat = cb.CatBoostRegressor()
+    #iceboost_cat.load_model(model_cat_filename, format='cbm')
 
-    return iceboost_xgb, iceboost_cat
+    # return iceboost_xgb, iceboost_cat
+
+    filename_xgb_with_v = config_file.model_input_dir + config_file.model_filename_xgb_with_v
+    filename_xgb_without_v = config_file.model_input_dir + config_file.model_filename_xgb_without_v
+    filename_xgb_without_v_with_lmax = config_file.model_input_dir + config_file.model_filename_xgb_without_v_with_lmax
+
+    filename_cat_with_v = config_file.model_input_dir + config_file.model_filename_cat_with_v
+    filename_cat_without_v = config_file.model_input_dir + config_file.model_filename_cat_without_v
+    filename_cat_without_v_with_lmax = config_file.model_input_dir + config_file.model_filename_cat_without_v_with_lmax
+
+    iceboost_xgb_with_v = xgb.Booster()
+    iceboost_xgb_with_v.load_model(filename_xgb_with_v)
+
+    iceboost_xgb_without_v = xgb.Booster()
+    iceboost_xgb_without_v.load_model(filename_xgb_without_v)
+
+    iceboost_xgb_without_v_with_lmax = xgb.Booster()
+    iceboost_xgb_without_v_with_lmax.load_model(filename_xgb_without_v_with_lmax)
+
+    iceboost_cat_with_v = cb.CatBoostRegressor()
+    iceboost_cat_with_v.load_model(filename_cat_with_v, format='cbm')
+
+    iceboost_cat_without_v = cb.CatBoostRegressor()
+    iceboost_cat_without_v.load_model(filename_cat_without_v, format='cbm')
+
+    iceboost_cat_without_v_with_lmax = cb.CatBoostRegressor()
+    iceboost_cat_without_v_with_lmax.load_model(filename_cat_without_v_with_lmax, format='cbm')
+
+    dict_models = {'xgb_v': iceboost_xgb_with_v, 'xgb_without_v': iceboost_xgb_without_v, 'xgb_without_v_with_lmax': iceboost_xgb_without_v_with_lmax,
+                   'cat_v': iceboost_cat_with_v, 'cat_without_v': iceboost_cat_without_v, 'cat_without_v_with_lmax': iceboost_cat_without_v_with_lmax}
+
+    return dict_models
+
+
+def compute_monte_carlo_error(dataset=None, features=None, rgi=None, model_xgb=None, model_cat=None):
+
+    assert rgi in range(1, 20), f"rgi must be an integer between 1 and 19, got {rgi}"
+
+    n_simul = 50
+    y_preds_xgb_all = []
+    y_preds_cat_all = []
+
+    noise_rules = {
+        'curv_50': 100*17.88/(50**2),           # [1/m] 0.01
+        'curv_100': 100*17.88/(100**2),         # [1/m] 0.01
+        'curv_150': 100*17.88/(150**2),         # [1/m] 0.01
+        'curv_300': 100*17.88/(300**2),         # [1/m] 0.01
+        'curv_450': 100*17.88/(450**2),         # [1/m] 0.01
+        'curv_gfa': 100*17.88/(500**2),         # [1/m] 0.01
+        't2m': 1,                               # [Kelvin] 1
+    }
+
+    slope_features = ['slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa']
+    slope_steps_meters = {
+        'slope50': 50,
+        'slope75': 75,
+        'slope100': 100,
+        'slope125': 125,
+        'slope150': 150,
+        'slope300': 300,
+        'slope450': 450,
+        'slopegfa': 500  # *** simplify ***
+    }
+
+    velocity_features = ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa']
+    if rgi in (5, 19):  # Greenland or Antarctica
+        sigma_velocity = 18. # [m/yr]
+    else:
+        sigma_velocity = 10. # [m/yr]
+
+    for n in range(n_simul):
+        #print(n)
+        X_noisy = dataset[features].copy()
+
+        # sigma z is 2.0 m for gentle terrain (<0.2), else 4.0 m
+        scale_elevation = np.where(np.abs(dataset['slope50']) < 0.2, 2.0, 4.0)
+
+        for f in features:
+
+            # Errors on velocity: 10-18 m/yr depending on region
+            if f in velocity_features:
+                X_noisy[f] += np.random.normal(loc=0, scale=sigma_velocity, size=len(dataset))
+                X_noisy[f] = np.clip(X_noisy[f], 0, None)
+
+            elif f == 'elevation':
+                X_noisy[f] += np.random.normal(loc=0, scale=scale_elevation, size=len(dataset))
+
+            # Errors on slope
+            elif f in slope_features:
+
+                sigma_delta_z = np.sqrt(4**2 + 4**2)  # [m] # # Vertical error in height *difference* (sqrt(4^2 + 4^2))
+                step_x = slope_steps_meters[f]
+                scale = sigma_delta_z / (2*step_x) # factor 2 from finite differences
+                #print(f, scale)
+
+                X_noisy[f] += np.random.normal(loc=0, scale=scale, size=len(dataset))
+                X_noisy[f] = np.clip(X_noisy[f], 0, None)
+
+            # Error on smb is taken as the 10% [mm w.e. yr-1]. Note absolute value.
+            elif f == 'smb':
+                X_noisy[f] += np.random.normal(loc=0, scale=0.1 * np.abs(dataset[f]), size=len(dataset))
+
+            # Error on dist_from_border_km_geom is taken as 100 meters.
+            elif f == 'dist_from_border_km_geom':
+                X_noisy[f] += np.random.normal(loc=0, scale=0.1, size=len(dataset))
+                X_noisy[f] = np.clip(X_noisy[f], 0, None)
+
+            # Error on dist_from_ocean is taken as 100 meters.
+            elif f == 'dist_from_ocean':
+                X_noisy[f] += np.random.normal(loc=0, scale=0.1, size=len(dataset))
+                X_noisy['dist_from_ocean'] = np.clip(X_noisy['dist_from_ocean'], 0, None)
+
+            # Error on lmax is 5 percent of glacier length [m]
+            elif f == 'lmax':
+                sigma_lmax = 0.05 * dataset['lmax'].iloc[0]
+                X_noisy[f] += np.random.normal(loc=0, scale=sigma_lmax, size=len(dataset))
+                X_noisy['lmax'] = np.clip(X_noisy['lmax'], 0, None)
+
+            elif f in noise_rules:
+                X_noisy[f] += np.random.normal(loc=0, scale=noise_rules[f], size=len(dataset))
+
+        # Construct dataset and predict
+        dtest_xgb = xgb.DMatrix(data=X_noisy)
+        y_preds_glacier_xgb = model_xgb.predict(dtest_xgb)
+        y_preds_glacier_cat = model_cat.predict(X_noisy)
+
+        y_preds_xgb_all.append(y_preds_glacier_xgb)
+        y_preds_cat_all.append(y_preds_glacier_cat)
+
+    # finally compute the ensemble
+    y_preds_xgb_all = np.stack(y_preds_xgb_all)  # shape: (n_simul, n_points)
+    y_preds_cat_all = np.stack(y_preds_cat_all)  # shape: (n_simul, n_points)
+
+    # Stack both model predictions together along a new axis
+    y_all = np.stack([y_preds_xgb_all, y_preds_cat_all], axis=0)  # shape: (2, n_simul, n_points)
+
+    # Compute mean across models and simulations
+    mean_all = y_all.mean(axis=(0, 1))  # shape: (n_points,)
+
+    # Compute std across models and simulations
+    std_all = y_all.std(axis=(0, 1))  # shape: (n_points,)
+
+    #fig, (ax1, ax2) = plt.subplots(1,2)
+    #s1 = ax1.scatter(dataset['lons'], dataset['lats'], c=mean_all, s=1, cmap='turbo')
+    #s2 = ax2.scatter(dataset['lons'], dataset['lats'], c=std_all, s=1, cmap='viridis')
+    #cb1 = plt.colorbar(s1)
+    #cb2 = plt.colorbar(s2)
+    #plt.show()
+
+    return mean_all, std_all
+
 
 def create_PIL_image(array, png_resolution=None):
     """
