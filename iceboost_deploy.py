@@ -58,7 +58,8 @@ all_glacier_ids = file_deploy.values.flatten().tolist()
 glathida_rgis = pd.read_csv(config.metadata_csv_file, low_memory=False)
 
 # Load the model(s)
-iceboost_xgb, iceboost_cat = load_models(config)
+#iceboost_xgb, iceboost_cat = load_models(config)
+models_dict = load_models(config)
 
 
 # *********************************************
@@ -74,7 +75,7 @@ run_deploy_from_csv_list = False
 if run_deploy_from_csv_list:
     for n, glacier_name_for_generation in enumerate(tqdm(all_glacier_ids)):
 
-        glacier_name_for_generation = get_random_glacier_rgiid(name='RGI2000-v7.0-G-17-30629', rgi=13, version='62', area=0, seed=None)
+        glacier_name_for_generation = get_random_glacier_rgiid(name='RGI60-03.01466', rgi=13, version='62', area=0, seed=None)
         #print(n, glacier_name_for_generation)
 
         #if f"{glacier_name_for_generation}.png" in os.listdir(f"{config.model_output_results_dir}"):
@@ -141,7 +142,27 @@ if run_deploy_from_csv_list:
                                     maxy=nelat + (deltalat + eps),
                                      rgi=test_glacier_rgi, path_tandemx=config.tandemx_dir)
 
-        X_test_glacier = data[config.features]
+        if info['poor_velocity'].any():
+            # if deploy area is large we simply remove velocity
+            if info['Area'].sum() > config.area_deploy_threshold:
+                print('Poor velocity and deploy area more than 10 km2')
+                features = config.featuresBase
+                iceboost_xgb = models_dict['xgb_without_v']
+                iceboost_cat = models_dict['cat_without_v']
+            # if deploy area is small we add lmax
+            else:
+                print('Poor velocity and deploy area less than 10 km2')
+                features = config.featuresBase_with_size
+                iceboost_xgb = models_dict['xgb_without_v_with_lmax']
+                iceboost_cat = models_dict['cat_without_v_with_lmax']
+        else:
+            print('Good velocity')
+            features = config.features
+            iceboost_xgb = models_dict['xgb_v']
+            iceboost_cat = models_dict['cat_v']
+
+
+        X_test_glacier = data[features]
         y_test_glacier_m = data[config.millan]
         y_test_glacier_f = data[config.farinotti]
 
@@ -156,8 +177,35 @@ if run_deploy_from_csv_list:
         # ensemble
         y_preds_glacier = 0.5 * (y_preds_glacier_xgb + y_preds_glacier_cat)
 
+        mean_MC, std_MC = compute_monte_carlo_error(dataset=data, features=features, rgi=int(test_glacier_rgi), model_xgb=iceboost_xgb,
+                                                    model_cat=iceboost_cat)
+
+        # H = np.maximum(mean_MC, 1e-3)  # m
+        # u = np.maximum(data['v150'], 1e-6)  # m/yr
+        # s = np.maximum(data['slope50'], 1e-6)  # slope (unitless)
+        # y = np.log(H)
+        # Xreg = np.vstack([np.log(u), np.log(s)]).T
+        # from sklearn.linear_model import HuberRegressor
+        # model_HR = HuberRegressor().fit(Xreg, y)
+        # alpha, beta = model_HR.coef_  # note sign: beta should be negative
+        # n_hat = -beta / alpha
+        # print(n_hat)
+
+        fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(10, 6))
+        vmin, vmax = y_preds_glacier.min(), y_preds_glacier.max()
+        s1 = ax1.scatter(data['lons'], data['lats'], c=y_preds_glacier, vmin=vmin, vmax=vmax, s=1, cmap='turbo')
+        cb1 = plt.colorbar(s1)
+        s2 = ax2.scatter(data['lons'], data['lats'], c=mean_MC, vmin=vmin, vmax=vmax, s=1, cmap='turbo')
+        cb2 = plt.colorbar(s2)
+        s3 = ax3.scatter(data['lons'], data['lats'], c=mean_MC - y_preds_glacier, vmin=-300, vmax=300, s=1,
+                         cmap='seismic')  # np.abs(max(mean_MC-y_preds_glacier))
+        cb3 = plt.colorbar(s3)
+        s4 = ax4.scatter(data['lons'], data['lats'], c=std_MC, s=1, cmap='viridis')
+        cb4 = plt.colorbar(s4)
+        plt.show()
+
         # Do you want to see the features ?
-        # plot_feature_scatter(config.features, data)
+        plot_feature_scatter(config.features, data)
 
         # Set negative predictions to zero
         y_preds_glacier = np.where(y_preds_glacier < 0, 0, y_preds_glacier)
@@ -698,8 +746,28 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
             data['h_ortho'] = h_ortho
             data['n_geoid'] = n_geoid
 
+            if info['poor_velocity'].any():
+                # if deploy area is large we simply remove velocity
+                if info['Area'].sum() > config.area_deploy_threshold:
+                    #print('Poor velocity and deploy area more than 10 km2')
+                    features = config.featuresBase
+                    iceboost_xgb = models_dict['xgb_without_v']
+                    iceboost_cat = models_dict['cat_without_v']
+                # if deploy area is small we add lmax
+                else:
+                    #print('Poor velocity and deploy area less than 10 km2')
+                    features = config.featuresBase_with_size
+                    iceboost_xgb = models_dict['xgb_without_v_with_lmax']
+                    iceboost_cat = models_dict['cat_without_v_with_lmax']
+            else:
+                #print('Good velocity')
+                features = config.features
+                iceboost_xgb = models_dict['xgb_v']
+                iceboost_cat = models_dict['cat_v']
+
             # 2. run model
-            X_test_glacier = data[config.features]
+            #X_test_glacier = data[config.features]
+            X_test_glacier = data[features]
             y_test_glacier_m = data[config.millan]
             y_test_glacier_f = data[config.farinotti]
 
@@ -717,6 +785,24 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
 
             # calculate error on thickness
             err_y = np.abs(y_preds_glacier_xgb - y_preds_glacier_cat)
+
+            # plot_feature_scatter(config.features, data)
+            # Monte-Carlo simulation
+            mean_MC, std_MC = compute_monte_carlo_error(dataset=data, features=features, rgi=rgi, model_xgb=iceboost_xgb, model_cat=iceboost_cat)
+            jensen_gap = mean_MC - y_preds_glacier
+            data['thickness_err'] = std_MC
+
+            # fig, (ax1, ax2, ax3, ax4) = plt.subplots(1,4, figsize=(10,6))
+            # vmin, vmax = y_preds_glacier.min(), y_preds_glacier.max()
+            # s1 = ax1.scatter(data['lons'], data['lats'], c=y_preds_glacier, vmin=vmin, vmax=vmax, s=1, cmap='turbo')
+            # cb1 = plt.colorbar(s1)
+            # s2 = ax2.scatter(data['lons'], data['lats'], c=mean_MC, vmin=vmin, vmax=vmax, s=1, cmap='turbo')
+            # cb2 = plt.colorbar(s2)
+            # s3 = ax3.scatter(data['lons'], data['lats'], c=mean_MC-y_preds_glacier, vmin=-300, vmax=300, s=1, cmap='seismic') #np.abs(max(mean_MC-y_preds_glacier))
+            # cb3 = plt.colorbar(s3)
+            # s4 = ax4.scatter(data['lons'], data['lats'], c=std_MC, s=1, cmap='viridis')
+            # cb4 = plt.colorbar(s4)
+            # plt.show()
 
             # 3. calculate volumes with Montecarlo
             vol_montecarlo, err_vol_montecarlo, vol_montecarlo_bsl = calc_volume_glacier(y=y_preds_glacier, area=deploy_area, H=h_ortho)
@@ -753,12 +839,14 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
             tree = cKDTree(points)
             distances, indexes = tree.query(np.column_stack((x_grid.ravel(), y_grid.ravel())))
             thickness_grid = y_preds_glacier[indexes].reshape(x_grid.shape)
-            err_thickness_grid = err_y[indexes].reshape(x_grid.shape)
+            err_thickness_grid = std_MC[indexes].reshape(x_grid.shape)
+            jensen_gap_grid = jensen_gap[indexes].reshape(x_grid.shape)
             h_wgs84_grid = h_wgs84[indexes].reshape(x_grid.shape)
             n_geoid_grid = n_geoid[indexes].reshape(x_grid.shape)
 
             assert not np.isnan(thickness_grid).any(), f'Thickness with some nans: glacier {gl_id}'
             assert not np.isnan(err_thickness_grid).any(), f'Thickness error with some nans: glacier {gl_id}'
+            assert not np.isnan(jensen_gap_grid).any(), f'Jensen gap with some nans: glacier {gl_id}'
             assert not np.isnan(h_wgs84_grid).any(), f'h_wgs84 with some nans: glacier {gl_id}'
             assert not np.isnan(n_geoid_grid).any(), f'n_geoid with some nans: glacier {gl_id}'
 
@@ -766,6 +854,7 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
             data_dataset = xarray.Dataset({
                 'thickness': (('y', 'x'), np.flip(thickness_grid, axis=0)),
                 'thickness_err': (('y', 'x'), np.flip(err_thickness_grid, axis=0)),
+                'jensen_gap': (('y', 'x'), np.flip(jensen_gap_grid, axis=0)),
                 'h_wgs84': (('y', 'x'), np.flip(h_wgs84_grid, axis=0)),
                 'n_geoid': (('y', 'x'), np.flip(n_geoid_grid, axis=0))
             },
@@ -776,6 +865,7 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
 
             data_dataset['thickness'].rio.write_nodata(np.nan, inplace=True)
             data_dataset['thickness_err'].rio.write_nodata(np.nan, inplace=True)
+            data_dataset['jensen_gap'].rio.write_nodata(np.nan, inplace=True)
             data_dataset['h_wgs84'].rio.write_nodata(np.nan, inplace=True)
             data_dataset['n_geoid'].rio.write_nodata(np.nan, inplace=True)
 
@@ -820,11 +910,19 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
                 # Calculate volume from produced data points
                 dataID = data.loc[data["polygon"] == glacierID]
                 f = 0.001 * areaID / len(dataID)
+
+                # ice volume
                 volID = dataID["thickness"].sum() * f
-                volID_bsl = np.where(dataID['h_ortho'] - dataID['thickness'] > 0, 0.0,
-                                     dataID['thickness'] - dataID['h_ortho']).sum() * f
+                err_volID = dataID["thickness_err"].sum() * f  # hypothesis: fully correlated thickness
+
+                # ice volume below sea level
+                mask_bsl = dataID["h_ortho"] - dataID["thickness"] <= 0
+                volID_bsl = (dataID.loc[mask_bsl, "thickness"] - dataID.loc[mask_bsl, "h_ortho"]).sum() * f
+                err_volID_bsl = dataID.loc[mask_bsl, "thickness_err"].sum() * f # hypothesis: fully correlated thickness
 
                 # Get ground truth measurements
+                # todo: I need to contemplate the case in which glacier in RGI70. glathida_rgis is built for RGI62
+                # todo: a better alternative would be to simply select all data within the glacier polygon
                 glathida_rgis_ID = glathida_rgis.loc[glathida_rgis['RGIId'] == glacierID]
                 ground_truth_lons = glathida_rgis_ID['POINT_LON'].to_list()
                 ground_truth_lats = glathida_rgis_ID['POINT_LAT'].to_list()
@@ -837,22 +935,21 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
                 arrayID.attrs['lon'] = geomID_4326.representative_point().x
                 arrayID.attrs['area'] = areaID
                 arrayID.attrs['volume'] = volID
+                arrayID.attrs['volume_error'] = err_volID
                 arrayID.attrs['volume_bsl'] = volID_bsl
+                arrayID.attrs['volume_bsl_error'] = err_volID_bsl
                 arrayID.attrs['ground_truth_lons'] = json.dumps(ground_truth_lons)
                 arrayID.attrs['ground_truth_lats'] = json.dumps(ground_truth_lats)
                 arrayID.attrs['ground_truth_meas'] = json.dumps(ground_truth_meas)
                 arrayID.attrs['resX'] = grid_res
                 arrayID.attrs['resY'] = grid_res
                 arrayID.attrs['crs'] = arrayID.rio.crs.to_string()
-                arrayID.attrs['h_wgs84'] = 'Tandem-X Edited DEM, 30m'
+                arrayID.attrs['h_wgs84'] = 'Tandem-X Edited DEM v1, 30m'
                 arrayID.attrs['n_geoid'] = 'EIGEN-6C4 geoid height, m'
                 arrayID.attrs['units_thickness'] = 'm'
                 arrayID.attrs['units_volume'] = 'km3'
                 arrayID.attrs['units_area'] = 'km2'
-                arrayID.attrs['method'] = 'ICEBOOST v1.1 model'
-                arrayID.attrs['data_citation'] = ("Maffezzoli, N., et al. 'A gradient-boosted tree framework to "
-                                                  "model the ice thickness of the world's glaciers (IceBoost v1.1).' "
-                                                  "Geoscientific Model Development 18.9 (2025): 2545-2568.")
+                arrayID.attrs['method'] = 'ICEBOOST v2.0 model'
                 arrayID.attrs['author'] = 'Niccolò Maffezzoli, University of California Irvine'
                 arrayID.attrs['production_date'] = datetime.today().strftime("%d-%B-%Y")
                 #print(arrayID)
@@ -873,8 +970,8 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
 run_rgi_simulation_YN = True
 if run_rgi_simulation_YN:
     t0 = time.time()
-    rgi = 3
-    version = '70G'
+    rgi = 19
+    version = '70G'# '70G'
 
     print(f"Begin regional simulation for region {rgi}, version {version}")
 
@@ -901,7 +998,8 @@ if run_rgi_simulation_YN:
     total_no_glaciers = len(rgi_glaciers)
 
     # load xgb, cat models (by default they run on cpu)
-    iceboost_xgb, iceboost_cat = load_models(config)
+    #iceboost_xgb, iceboost_cat = load_models(config)
+    models_dict = load_models(config)
 
     # decide if multiprocessing is used
     multicpu = config.n_jobs > 1
@@ -932,7 +1030,7 @@ if run_rgi_simulation_YN:
             #)
 
     else:
-        target = ['AntPen_18', 'AntPen_21'] # RGI60-07.00027 RGI60-07.01514 RGI60-07.00027
+        target = ['RGI60-07.01506'] # RGI60-07.00027 RGI60-07.01514 RGI60-07.00027
         #target = ['AntPen_7', 'AntPen_8', 'AntPen_9', 'AntPen_10', 'AntPen_11', 'AntPen_13', 'AntPen_14', 'AntPen_15', 'AntPen_16',
         #          'AntPen_20', 'AntPen_21', 'AntPen_22']
         glaciers_for_deploy = rgi_glaciers.loc[rgi_glaciers[name_column_id].isin(target)]
