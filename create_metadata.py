@@ -35,7 +35,6 @@ pd.set_option('display.width', None)
 pd.set_option('display.max_rows', None)
 """
 This program creates a training dataset for machine learning thickness inversion, or other purposes.
-Time all rgis: 239m
 
 1. add_rgi. Time: 1min. TESTED.
 2. add_RGIId_and_OGGM_stats. TESTED. All rgis: 20 min 
@@ -82,7 +81,7 @@ parser.add_argument('--path_ERA5_t2m_folder', type=str,default="/media/maffe/nvm
 parser.add_argument('--GSHHG_folder', type=str,default="/media/maffe/nvme/gshhg/", help="Path to GSHHG folder")
 parser.add_argument('--save', type=int, default=0, help="Save final dataset or not.")
 parser.add_argument('--save_outname', type=str,
-            default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/glathida43",
+            default="/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/glathida44",
             help="Saved dataframe name.")
 parser.add_argument('--config', type=str, default="config/config.yaml", help="Path to yaml config file")
 
@@ -1923,7 +1922,7 @@ def add_dist_from_boder_using_geometries(glathida,
             # List of distances for glacier_id
             glacier_id_dist = []
 
-            # Decide which method to use (default should be method_KDTree_spatial_index)
+            # Decide which method to use (default should be geopandas should be method_geopandas_distances)
             method_KDTree_spatial_index = False
             method_geopandas_distances = True
 
@@ -1948,7 +1947,7 @@ def add_dist_from_boder_using_geometries(glathida,
                     #print(lon_check, lat_check, lon, lat)
 
                 # Make check 1.
-                make_check1 = True
+                make_check1 = False
                 if make_check1:
                     is_inside = gl_geom_ext.contains(Point(lon, lat))
                     assert is_inside is True, f"The point is expected to be inside but is outside glacier."
@@ -1982,8 +1981,8 @@ def add_dist_from_boder_using_geometries(glathida,
                         #print(geoms_coords_array.shape, point_array.shape)
                         distances, indices = kdtree.query(point_array, k=1)
                         min_dist_KDTree = distances[0,0] # np.min(distances, axis=1)) or equivalently distances[:,0]
-                        closest_point_index = indices[0, 0]
-                        closest_point = Point(geoms_coords_array[closest_point_index])
+                        #closest_point_index = indices[0, 0]
+                        #closest_point = Point(geoms_coords_array[closest_point_index])
                         #tqdm.write(f"{min_dist_KDTree}")
                         #tqdm.write(f"{closest_point, nearest_point_on_boundary}")
 
@@ -2001,8 +2000,8 @@ def add_dist_from_boder_using_geometries(glathida,
 
 
                 # Fill distance list for glacier id of point
-                #glacier_id_dist.append(min_dist_KDTree/1000.)
-                glacier_id_dist.append(min_dist_geopandas_distances/1000.)
+                if method_KDTree_spatial_index: glacier_id_dist.append(min_dist_KDTree/1000.)
+                if method_geopandas_distances: glacier_id_dist.append(min_dist_geopandas_distances/1000.)
                 #diff = abs(min_dist_geopandas_distances-min_dist_KDTree)/min_dist_KDTree
                 #print(f"{rgi_id}, {min_dist_geopandas_distances}, {min_dist_KDTree}, {diff:.4f}")
 
@@ -2587,26 +2586,29 @@ if __name__ == '__main__':
     if prepare_glathida:
         #glathida = pd.read_csv(args.path_ttt_csv, low_memory=False)
         #glathida = pd.read_parquet('/media/maffe/nvme/additional_glacier_ice_thickness_data/jostedalsbreen/jostedalsbreen_ice_thick_for_iceboost.parquet')
-        glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'glathida43.csv'), low_memory=False)
-        #glathida = add_rgi(glathida, args.path_O1Regions_shp)
-        #glathida = add_RGIId_and_OGGM_stats(glathida, add_glacier_rgi=None, add_glacier_shp_file=None)
+        #glathida = pd.read_csv('/media/maffe/nvme/additional_glacier_ice_thickness_data/alaska/alaska_ice_thick_for_iceboost.csv')
+        glathida = pd.read_csv('/media/maffe/nvme/additional_glacier_ice_thickness_data/asia/asia_ice_thick_for_iceboost.csv')
+        #glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'glathida43.csv'), low_memory=False)
+        glathida = add_rgi(glathida, args.path_O1Regions_shp)
+        glathida = add_RGIId_and_OGGM_stats(glathida, add_glacier_rgi=None, add_glacier_shp_file=None)
         #glathida.to_csv("/media/maffe/nvme/glathida/glathida-3.1.0/glathida-3.1.0/data/metadata_rgi_oggm.csv", index=False)
-        #glathida = add_slopes_elevation(glathida, args.mosaic)
-        #glathida = add_smb(glathida)
-        #glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
+        glathida = add_slopes_elevation(glathida, args.mosaic)
+        glathida = add_smb(glathida)
+        glathida = add_millan_vx_vy_ith(glathida, args.millan_velocity_folder, args.millan_icethickness_folder)
         #glathida = pd.read_csv(args.path_ttt_rgi_csv.replace('TTT_rgi.csv', 'glathida38.csv'), low_memory=False)
         glathida = add_dist_from_boder_using_geometries(glathida,
                                                         add_glacier_rgi=19,
                                                         add_glacier_shp_file=args.add_glacier_shp_file,
                                                         add_glacier_intersect_shp_file=args.add_glacier_intersect_shp_file)
-        #glathida = add_dist_from_water(glathida, args.GSHHG_folder)
-        #glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
-        #glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
+        glathida = add_dist_from_water(glathida, args.GSHHG_folder)
+        glathida = add_farinotti_ith(glathida, args.farinotti_icethickness_folder)
+        glathida = add_t2m(glathida, args.path_ERA5_t2m_folder)
 
         if args.save:
-            pass
             #glathida.to_csv(f'{args.save_outname}.csv', index=False)
             #glathida.to_csv(f'/media/maffe/nvme/additional_glacier_ice_thickness_data/patagonia/patagonia_ice_thick_train_iceboost.csv', index=False)
             #glathida.to_csv(f'/media/maffe/nvme/additional_glacier_ice_thickness_data/jostedalsbreen/jostedalsbreen_ice_thick_train_iceboost.csv', index=False)
+            #glathida.to_csv(f'/media/maffe/nvme/additional_glacier_ice_thickness_data/alaska/alaska_ice_thick_train_iceboost.csv', index=False)
+            glathida.to_csv(f'/media/maffe/nvme/additional_glacier_ice_thickness_data/asia/asia_ice_thick_train_iceboost.csv', index=False)
             #print(f"Metadata dataset saved: {args.save_outname}.csv")
         print(f'Finished in {(time.time()-t0)/60} minutes. Bye bye.')
