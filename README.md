@@ -2,16 +2,18 @@
     <img alt="Logo" src="img/logo_iceboost.svg" style="width: 100%; height: auto;" />
 </div>
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13145836.svg)](https://doi.org/10.5281/zenodo.13145836)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13145836.svg)](https://doi.org/10.5281/zenodo.13145836) 
 
 [[<u>PAPER</u>](https://gmd.copernicus.org/articles/18/2545/2025/)]✍️
 
-<h4 align="left">
-A Gradient-Boosted Tree framework 
-to model the ice thickness of the World's glaciers
-
-  <img src="img/iceboost.gif" alt="IceBoost GIF">
-</h4>
+<div align="center">
+  <h2 style="font-weight: normal; text-align: left;">
+    A Gradient-Boosted Tree framework 
+    to model the ice thickness of the World's glaciers
+    <br>
+    <img src="img/iceboost_v2.gif" alt="IceBoost GIF">
+  </h2>
+</div>
 
 ---
 ## Prepare the model inputs
