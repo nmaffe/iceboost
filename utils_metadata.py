@@ -1,4 +1,6 @@
 import time
+
+import rioxarray
 import utm
 import warnings
 import scipy
@@ -6,7 +8,7 @@ import random
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from pyproj import Proj, Transformer, Geod
+from pyproj import Proj, Transformer, Geod, CRS
 from sklearn.neighbors import KDTree
 from scipy.spatial import distance_matrix
 from shapely.geometry import Point, Polygon, LineString, MultiLineString, box
@@ -94,7 +96,7 @@ def lmax_with_covex_hull(geometry, glacier_epsg):
 def lmax_imputer(geometry, glacier_epsg):
     '''
     geometry: glacier external geometry as pandas geodataframe in 4326 prjection
-    glacier_epsg: glacier espg
+    glacier_epsg: glacier epsg
     return: lmax in meters
     '''
     geometry_epsg = geometry.to_crs(epsg=glacier_epsg)
@@ -166,20 +168,55 @@ def get_cmap(name):
     return cm
 
 
-def calc_geoid_heights(lons=None, lats=None, h_wgs84=None):
-    '''Calculates orthometric heights'''
+def calc_orthometric_heights(lons=None, lats=None, h_wgs84=None):
+    """
+    :param h_wgs84: ellipsoid height
+    :return: orthometric height (Hmsl)
+    """
     transformer = Transformer.from_crs("epsg:4326", "epsg:3855", always_xy=True)
     _, _, h_egm2008 = transformer.transform(lons, lats, h_wgs84)
     return h_egm2008
 
-#def calc_volume_glacier(y1=None, y2=None, area=0, h_egm2008=None):
-def calc_volume_glacier(y=None, area=0, h_egm2008=None):
+def calc_ortho_and_geoid_heights(lons=None, lats=None, h_wgs84=None, geoid_tif=None):
+    """
+    :param h_wgs84: ellipsoid height (i.e. DEM elevation)
+    :return: orthometric height (H) and geoid height (N)
+    """
+    # Ellipsoidal input CRS
+    wgs84 = CRS.from_epsg(4979)
+    geoid_crs = CRS.from_proj4(f"+proj=latlong +datum=WGS84 +geoidgrids={geoid_tif}")
 
+    transformer = Transformer.from_crs(geoid_crs, wgs84, always_xy=True)
+
+    z = np.zeros_like(lons)
+    _, _, N = transformer.transform(lons, lats, z)
+
+    H = h_wgs84 - N
+
+    return H, N
+
+def calc_ellipsoid_heights(lons=None, lats=None, H=None):
+    """
+    :param H: orthometric height (Hmsl)
+    :return: ellipsoid height (hwgs84)
+    """
+    lons = np.array(lons)
+    lats = np.array(lats)
+    H = np.array(H)
+
+    zeros = np.zeros(len(lons))
+    transformer = Transformer.from_crs("epsg:4326", "epsg:3855", always_xy=True)
+    _, _, N = transformer.transform(lons, lats, zeros) # this yields N = -H
+    N = N * -1
+    h_wgs84 = H + N
+    return h_wgs84
+
+def calc_volume_glacier(y=None, area=0, H=None):
     '''
-    :param y1: numpy.ndarray. Ice thickness [m]
-    :param y2: numpy.ndarray. Ice thickness [m]
-    :param area: float [km2]
-    :return: volume [km3].
+    :param y: numpy.ndarray. Ice thickness [m]
+    :param area: area: float [km2]
+    :param H: numpy.ndarray. Orthometric height [m]
+    :return: volume [km3]
     '''
     #y_xgb = y1
     #y_cat = y2
@@ -204,7 +241,7 @@ def calc_volume_glacier(y=None, area=0, h_egm2008=None):
     #volume_af = np.sum(np.where(h_egm2008 - y_mean > 0, y_mean, h_egm2008)) * f
     # volume ice below sea level
     #volume_bsl = np.sum(np.where(h_egm2008 - y_mean > 0, 0.0, y_mean - h_egm2008)) * f
-    volume_bsl = np.sum(np.where(h_egm2008 - y > 0, 0.0, y - h_egm2008)) * f
+    volume_bsl = np.sum(np.where(H - y > 0, 0.0, y - H)) * f
 
     #err_points = np.std((y_xgb, y_cat), axis=0)
     err_points = 0
@@ -315,15 +352,165 @@ def create_train_test(df, rgi=None, frac=0.1, full_shuffle=None, seed=None):
 
 def load_models(config_file):
 
-    model_xgb_filename = config_file.model_input_dir + config_file.model_filename_xgb
-    iceboost_xgb = xgb.Booster()
-    iceboost_xgb.load_model(model_xgb_filename)
+    #model_xgb_filename = config_file.model_input_dir + config_file.model_filename_xgb
+    #iceboost_xgb = xgb.Booster()
+    #iceboost_xgb.load_model(model_xgb_filename)
 
-    model_cat_filename = config_file.model_input_dir + config_file.model_filename_cat
-    iceboost_cat = cb.CatBoostRegressor()
-    iceboost_cat.load_model(model_cat_filename, format='cbm')
+    #model_cat_filename = config_file.model_input_dir + config_file.model_filename_cat
+    #iceboost_cat = cb.CatBoostRegressor()
+    #iceboost_cat.load_model(model_cat_filename, format='cbm')
 
-    return iceboost_xgb, iceboost_cat
+    # return iceboost_xgb, iceboost_cat
+
+    filename_xgb_with_v = config_file.model_input_dir + config_file.model_filename_xgb_with_v
+    filename_xgb_without_v = config_file.model_input_dir + config_file.model_filename_xgb_without_v
+    filename_xgb_without_v_with_lmax = config_file.model_input_dir + config_file.model_filename_xgb_without_v_with_lmax
+
+    filename_cat_with_v = config_file.model_input_dir + config_file.model_filename_cat_with_v
+    filename_cat_without_v = config_file.model_input_dir + config_file.model_filename_cat_without_v
+    filename_cat_without_v_with_lmax = config_file.model_input_dir + config_file.model_filename_cat_without_v_with_lmax
+
+    iceboost_xgb_with_v = xgb.Booster()
+    iceboost_xgb_with_v.load_model(filename_xgb_with_v)
+
+    iceboost_xgb_without_v = xgb.Booster()
+    iceboost_xgb_without_v.load_model(filename_xgb_without_v)
+
+    iceboost_xgb_without_v_with_lmax = xgb.Booster()
+    iceboost_xgb_without_v_with_lmax.load_model(filename_xgb_without_v_with_lmax)
+
+    iceboost_cat_with_v = cb.CatBoostRegressor()
+    iceboost_cat_with_v.load_model(filename_cat_with_v, format='cbm')
+
+    iceboost_cat_without_v = cb.CatBoostRegressor()
+    iceboost_cat_without_v.load_model(filename_cat_without_v, format='cbm')
+
+    iceboost_cat_without_v_with_lmax = cb.CatBoostRegressor()
+    iceboost_cat_without_v_with_lmax.load_model(filename_cat_without_v_with_lmax, format='cbm')
+
+    dict_models = {'xgb_v': iceboost_xgb_with_v, 'xgb_without_v': iceboost_xgb_without_v, 'xgb_without_v_with_lmax': iceboost_xgb_without_v_with_lmax,
+                   'cat_v': iceboost_cat_with_v, 'cat_without_v': iceboost_cat_without_v, 'cat_without_v_with_lmax': iceboost_cat_without_v_with_lmax}
+
+    return dict_models
+
+
+def compute_monte_carlo_error(dataset=None, features=None, rgi=None, model_xgb=None, model_cat=None):
+
+    assert rgi in range(1, 20), f"rgi must be an integer between 1 and 19, got {rgi}"
+
+    n_simul = 50
+    y_preds_xgb_all = []
+    y_preds_cat_all = []
+
+    noise_rules = {
+        'curv_50': 100*17.88/(50**2),           # [1/m] 0.01
+        'curv_100': 100*17.88/(100**2),         # [1/m] 0.01
+        'curv_150': 100*17.88/(150**2),         # [1/m] 0.01
+        'curv_300': 100*17.88/(300**2),         # [1/m] 0.01
+        'curv_450': 100*17.88/(450**2),         # [1/m] 0.01
+        'curv_gfa': 100*17.88/(500**2),         # [1/m] 0.01
+        't2m': 1,                               # [Kelvin] 1
+    }
+
+    slope_features = ['slope50', 'slope75', 'slope100', 'slope125', 'slope150', 'slope300', 'slope450', 'slopegfa']
+    slope_steps_meters = {
+        'slope50': 50,
+        'slope75': 75,
+        'slope100': 100,
+        'slope125': 125,
+        'slope150': 150,
+        'slope300': 300,
+        'slope450': 450,
+        'slopegfa': 500  # *** simplify ***
+    }
+
+    velocity_features = ['v50', 'v100', 'v150', 'v300', 'v450', 'vgfa']
+    if rgi in (5, 19):  # Greenland or Antarctica
+        sigma_velocity = 18. # [m/yr]
+    else:
+        sigma_velocity = 10. # [m/yr]
+
+    for n in range(n_simul):
+        #print(n)
+        X_noisy = dataset[features].copy()
+
+        # sigma z is 2.0 m for gentle terrain (<0.2), else 4.0 m
+        scale_elevation = np.where(np.abs(dataset['slope50']) < 0.2, 2.0, 4.0)
+
+        for f in features:
+
+            # Errors on velocity: 10-18 m/yr depending on region
+            if f in velocity_features:
+                X_noisy[f] += np.random.normal(loc=0, scale=sigma_velocity, size=len(dataset))
+                X_noisy[f] = np.clip(X_noisy[f], 0, None)
+
+            elif f == 'elevation':
+                X_noisy[f] += np.random.normal(loc=0, scale=scale_elevation, size=len(dataset))
+
+            # Errors on slope
+            elif f in slope_features:
+
+                sigma_delta_z = np.sqrt(4**2 + 4**2)  # [m] # # Vertical error in height *difference* (sqrt(4^2 + 4^2))
+                step_x = slope_steps_meters[f]
+                scale = sigma_delta_z / (2*step_x) # factor 2 from finite differences
+                #print(f, scale)
+
+                X_noisy[f] += np.random.normal(loc=0, scale=scale, size=len(dataset))
+                X_noisy[f] = np.clip(X_noisy[f], 0, None)
+
+            # Error on smb is taken as the 10% [mm w.e. yr-1]. Note absolute value.
+            elif f == 'smb':
+                X_noisy[f] += np.random.normal(loc=0, scale=0.1 * np.abs(dataset[f]), size=len(dataset))
+
+            # Error on dist_from_border_km_geom is taken as 100 meters.
+            elif f == 'dist_from_border_km_geom':
+                X_noisy[f] += np.random.normal(loc=0, scale=0.1, size=len(dataset))
+                X_noisy[f] = np.clip(X_noisy[f], 0, None)
+
+            # Error on dist_from_ocean is taken as 100 meters.
+            elif f == 'dist_from_ocean':
+                X_noisy[f] += np.random.normal(loc=0, scale=0.1, size=len(dataset))
+                X_noisy['dist_from_ocean'] = np.clip(X_noisy['dist_from_ocean'], 0, None)
+
+            # Error on lmax is 5 percent of glacier length [m]
+            elif f == 'lmax':
+                sigma_lmax = 0.05 * dataset['lmax'].iloc[0]
+                X_noisy[f] += np.random.normal(loc=0, scale=sigma_lmax, size=len(dataset))
+                X_noisy['lmax'] = np.clip(X_noisy['lmax'], 0, None)
+
+            elif f in noise_rules:
+                X_noisy[f] += np.random.normal(loc=0, scale=noise_rules[f], size=len(dataset))
+
+        # Construct dataset and predict
+        dtest_xgb = xgb.DMatrix(data=X_noisy)
+        y_preds_glacier_xgb = model_xgb.predict(dtest_xgb)
+        y_preds_glacier_cat = model_cat.predict(X_noisy)
+
+        y_preds_xgb_all.append(y_preds_glacier_xgb)
+        y_preds_cat_all.append(y_preds_glacier_cat)
+
+    # finally compute the ensemble
+    y_preds_xgb_all = np.stack(y_preds_xgb_all)  # shape: (n_simul, n_points)
+    y_preds_cat_all = np.stack(y_preds_cat_all)  # shape: (n_simul, n_points)
+
+    # Stack both model predictions together along a new axis
+    y_all = np.stack([y_preds_xgb_all, y_preds_cat_all], axis=0)  # shape: (2, n_simul, n_points)
+
+    # Compute mean across models and simulations
+    mean_all = y_all.mean(axis=(0, 1))  # shape: (n_points,)
+
+    # Compute std across models and simulations
+    std_all = y_all.std(axis=(0, 1))  # shape: (n_points,)
+
+    #fig, (ax1, ax2) = plt.subplots(1,2)
+    #s1 = ax1.scatter(dataset['lons'], dataset['lats'], c=mean_all, s=1, cmap='turbo')
+    #s2 = ax2.scatter(dataset['lons'], dataset['lats'], c=std_all, s=1, cmap='viridis')
+    #cb1 = plt.colorbar(s1)
+    #cb2 = plt.colorbar(s2)
+    #plt.show()
+
+    return mean_all, std_all
+
 
 def create_PIL_image(array, png_resolution=None):
     """
@@ -343,29 +530,47 @@ def create_PIL_image(array, png_resolution=None):
     image_resized = image.resize((png_resolution, png_resolution), Image.Resampling.LANCZOS)
     return image_resized
 
-def get_rgi_products(rgi, version, gdf_shp=None, gdf_intersects_shp=None):
+def get_rgi_products(region=None, version=None, add_glacier_geom_file=None, add_glacier_intersects_geom_file=None):
+    """
+    :param region: rgi region 1 to 19
+    :param version: rgi version '62', '70G'
+    :param add_glacier_geom_file: if this gpkg file is provided, it will be added to the rgi dataframe
+    :param add_glacier_intersects_geom_file: if this gpkg file is provided, it will be added to the rgi dataframe
+    :return: regional glacier dataframe and regional graph of glacier connectivity
+    """
 
-    if version not in ('62', '70G'):
-        raise ValueError("Accepted RGI versions are 62 or 70G. Exit.")
+    if region is None: raise ValueError("You need to specify the region number as string. Exit.")
 
-    if not isinstance(rgi, str): rgi = f"{rgi:02d}"
+    if version not in ('62', '70G'): raise ValueError("Accepted RGI versions are 62 or 70G. Exit.")
 
-    # If shp is provided as input
-    if gdf_shp is not None:
-        FILE_RGI_SHP = gdf_shp
-        FILE_RGI_INTERSECTS_SHP = gdf_intersects_shp
+    if not isinstance(region, str): region = f"{region:02d}"
 
-    # run rgi shp
-    else:
-        # get rgi region and intersect shp files
-        FILE_RGI_SHP = utils.get_rgi_region_file(rgi, version=version)
-        FILE_RGI_INTERSECTS_SHP = utils.get_rgi_intersects_region_file(rgi, version=version)
+    FILE_SHP_RGI = utils.get_rgi_region_file(region=region, version=version)
+    FILE_INTERSECTS_SHP_RGI = utils.get_rgi_intersects_region_file(region=region, version=version)
 
-    # get rgi dataset of glaciers and glaciers intersects
-    rgi_glaciers = gpd.read_file(FILE_RGI_SHP, engine='pyogrio')
-    rgi_intersects = gpd.read_file(FILE_RGI_INTERSECTS_SHP, engine='pyogrio')
+    # get dataset of glaciers and intersects from rgi
+    rgi_glaciers = gpd.read_file(FILE_SHP_RGI, engine='pyogrio')
+    rgi_intersects = gpd.read_file(FILE_INTERSECTS_SHP_RGI, engine='pyogrio')
 
-    # Create graph of connectivity needed for distance calculations
+    # if user has provided a glacier and intersect shp files, concatenate with rgi
+    if add_glacier_geom_file is not None:
+        rgi_glaciers_user_input = gpd.read_file(add_glacier_geom_file, engine='pyogrio')
+        rgi_intersects_user_input = gpd.read_file(add_glacier_intersects_geom_file, engine='pyogrio')
+
+        if not rgi_glaciers_user_input.crs == "EPSG:4326":
+            rgi_glaciers_user_input = rgi_glaciers_user_input.to_crs("EPSG:4326")
+        if not rgi_intersects_user_input.crs == "EPSG:4326":
+            rgi_intersects_user_input = rgi_intersects_user_input.to_crs("EPSG:4326")
+
+        assert set(rgi_glaciers_user_input.columns).issubset(rgi_glaciers.columns), \
+            "Incompatible concatenation with custom glacier dataframes"
+        assert set(rgi_intersects_user_input.columns).issubset(rgi_intersects.columns), \
+            "Incompatible concatenation with custom intersect glacier dataframes"
+
+        rgi_glaciers = pd.concat([rgi_glaciers, rgi_glaciers_user_input], ignore_index=True)
+        rgi_intersects = pd.concat([rgi_intersects, rgi_intersects_user_input], ignore_index=True)
+
+    # create graph of connectivity needed for distance calculations
     rgi_graph = networkx.Graph()
     if version == '62':
         edges = rgi_intersects[['RGIId_1', 'RGIId_2']].values
@@ -374,14 +579,80 @@ def get_rgi_products(rgi, version, gdf_shp=None, gdf_intersects_shp=None):
 
     rgi_graph.add_edges_from(edges)
 
+    rgi_products = (rgi_glaciers, rgi_graph)
+
+    return rgi_products
+
+
+def add_regional_features(df=None):
+    """
+    :param df: regional dataframe with glacier geometries
+    :return: df with added 'area', 'area_icefree', 'perimeter', 'cen_lat', 'cen_lon', 'cen_epsg'
+    """
+
+    geod = Geod(ellps="WGS84")
+
+    def calc_feats(geometry):
+        area, perimeter = geod.geometry_area_perimeter(geometry)
+        area = abs(area) * 1e-6
+        geometry_ext = Polygon(geometry.exterior)
+        gl_geom_ext_gdf = gpd.GeoDataFrame(geometry=[geometry_ext], crs="EPSG:4326")
+        area_ice_and_noince, _ = geod.geometry_area_perimeter(geometry_ext)
+        area_ice_and_noince = abs(area_ice_and_noince) * 1e-6
+
+        # Calculate area of nunataks in percentage to the total area
+        area_noice = 1 - area / area_ice_and_noince
+
+        glacier_centroid = geometry_ext.centroid
+        cenLon, cenLat = glacier_centroid.x, glacier_centroid.y
+        _, _, _, _, glacier_epsg = from_lat_lon_to_utm_and_epsg(cenLat, cenLon)
+
+        lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg)
+
+        return (area,  # Area in km²,
+                area_noice,  # unitless,
+                perimeter,  # perimeter in meters
+                lmax,    # m
+                cenLat,  # degrees north
+                cenLon,  # degrees east
+                glacier_epsg)  # epsg
+
+    # apply the function and unpack results
+    results = np.array(df['geometry'].apply(calc_feats).to_list())
+    df[['area', 'area_icefree', 'perimeter', 'lmax', 'cen_lat', 'cen_lon', 'cen_epsg']] = results
+    df['cen_epsg'] = df['cen_epsg'].astype(int)
+
+    return df
+
+def get_mass_balance_df(region=None):
     # mass balance rgi dataframe
     mbdf = utils.get_geodetic_mb_dataframe()
     mbdf = mbdf.loc[mbdf['period'] == '2000-01-01_2020-01-01']
-    mbdf_rgi = mbdf.loc[mbdf['reg'] == int(rgi)]
+    mbdf_rgi = mbdf.loc[mbdf['reg'] == int(region)]
+    assert len(mbdf_rgi)>0, "Mass balance dataframe error in import."
 
-    rgi_products = (rgi_glaciers, rgi_graph, mbdf_rgi)
+    return mbdf_rgi
 
-    return rgi_products
+def get_glacier_geometries_4326(ids=None, glacier_geo_df=None, version=None):
+
+    if version == '62':
+        name_column_id = 'RGIId'
+        name_column_name = 'Name'
+    elif version == '70G':
+        name_column_id = 'rgi_id'
+        name_column_name = 'glac_name'
+    else:
+        raise ValueError("Version not supported.")
+
+    # Extract id and geometry
+    glacier_geometries = glacier_geo_df.loc[glacier_geo_df[name_column_id].isin(ids), [name_column_id, 'geometry']]
+    # Set the glacier id as the dataframe index
+    glacier_geometries = glacier_geometries.set_index(name_column_id).rename_axis('polygon')
+
+    assert glacier_geometries.crs == "EPSG:4326", "Unexpected projection in get_glacier_geometries_4326 method."
+    assert len(glacier_geometries) > 0, "Geometries not found."
+
+    return glacier_geometries
 
 def get_coastline_dataframe(GSHHG_folder):
     gdf16 = gpd.read_file(f'{GSHHG_folder}GSHHS_f_L1_L6.shp', engine='pyogrio')
@@ -416,10 +687,20 @@ def find_cluster_with_graph(graph, start_node, max_depth=None):
 
     return list(nodes_at_depth)
 
+def get_possible_cluster(graph, start_node, glacier_epsg, rgi, rgi_glaciers, name_column_id, config):
 
-def get_possible_cluster(graph, start_node, glacier_epsg, rgi, oggm_rgi_glaciers, name_column_id):
+    # Get rgi clustering limits from config file
+    rgi_clustering_limits = config.rgi_clustering_limits.get(f"rgi_{rgi}", False)
+
+    # if rgi does not contemplate clustering, return False
+    if rgi_clustering_limits is False:
+        return False
+
+    # we are in the case of a rgi that contemplate clustering
+
+    # Return False if the start node is not in the graph (isolated glacier)
     if not graph.has_node(start_node):
-        return False  # Return False if the start node is not in the graph (isolated glacier)
+        return False
 
     # Step 1: Create a cluster, i.e. all glaciers connected to the start glacier
     cluster_nodes = networkx.node_connected_component(graph, start_node)
@@ -429,38 +710,31 @@ def get_possible_cluster(graph, start_node, glacier_epsg, rgi, oggm_rgi_glaciers
     cluster_min_depth = networkx.radius(cluster)
     cluster_no_nodes = cluster.number_of_nodes()
     cluster_no_edges = cluster.number_of_edges()
-    if rgi == 3: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 50 and cluster_no_edges <= 90)
-    elif rgi == 4: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
-    elif rgi == 5: is_low_complexity = (cluster_min_depth <= 5 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
-    elif rgi == 6: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 100 and cluster_no_edges <= 999)
-    elif rgi == 7: is_low_complexity = (cluster_min_depth <= 6 and cluster_no_nodes <= 40 and cluster_no_edges <= 90)
-    elif rgi == 9: is_low_complexity = (cluster_min_depth <= 12 and cluster_no_nodes <= 144 and cluster_no_edges <= 252)
-    elif rgi == 19: is_low_complexity = (cluster_min_depth <= 3 and cluster_no_nodes <= 30 and cluster_no_edges <= 40)
-    else: raise ValueError(f"Deploy on cluster not supported for rgi {rgi}")
-    #print(cluster_min_depth, cluster_no_nodes, cluster_no_edges, is_low_complexity)
+    #print(cluster_min_depth, cluster_no_nodes, cluster_no_edges)
 
-    # Step 3: If cluster too complex, exit.
+    # Step 3: create cluster dataframe with ids, area, perimeter and lmax
+    df_cluster = rgi_glaciers.loc[rgi_glaciers[name_column_id].isin(cluster_nodes), [name_column_id, 'area', 'perimeter', 'lmax']]
+    df_cluster = df_cluster.set_index(name_column_id).rename_axis('cluster_IDs')
+    cluster_area = float(df_cluster['area'].sum())
+    max_area_for_clustering = 10000  # km2
+
+    # Step 4: calculate cluster complexity based on graph parameters and cluster total area
+    is_low_complexity = (
+        cluster_min_depth <= rgi_clustering_limits["min_depth"]
+        and cluster_no_nodes <= rgi_clustering_limits["no_nodes"]
+        and cluster_no_edges <= rgi_clustering_limits["no_edges"]
+        and cluster_area < max_area_for_clustering
+    )
+    #print(rgi_clustering_limits)
+    #print(cluster_min_depth, cluster_no_nodes, cluster_no_edges, cluster_area)
+    #input('wait')
+
+    # Step 5: if cluster too complex, return False, otherwise return cluster dataframe
     if is_low_complexity is False:
         return False
+    else:
+        return df_cluster
 
-    # Step 4: Initialize a dataframe with cluster ids, Area, Perimeter, lmax
-    df_cluster = pd.DataFrame(0.0, index=list(cluster_nodes), columns=['Area', 'Perimeter', 'lmax'])
-    df_cluster.index.name = 'cluster_IDs'
-    for glacier_name in df_cluster.index:
-        gl_df = oggm_rgi_glaciers.loc[oggm_rgi_glaciers[name_column_id] == glacier_name]
-        gl_geom = gl_df['geometry'].item()  # glacier geometry Polygon
-        gl_geom_ext = Polygon(gl_geom.exterior)
-        gl_geom_ext_gdf = gpd.GeoDataFrame(geometry=[gl_geom_ext], crs="EPSG:4326")
-        lmax = lmax_with_covex_hull(gl_geom_ext_gdf, glacier_epsg) # we use the epsg of the starting glacier for all
-        area, perimeter = Geod(ellps="WGS84").geometry_area_perimeter(gl_geom)
-        area = abs(area) * 1e-6  # km^2
-        df_cluster.loc[glacier_name, 'Area'] = area
-        df_cluster.loc[glacier_name, 'Perimeter'] = perimeter
-        df_cluster.loc[glacier_name, 'lmax'] = lmax
-        #print(glacier_name, '\t', area, perimeter, lmax)
-
-    # Return cluster dataframe with IDs, Area, Perimeter and lmax values
-    return df_cluster
 
 def normalized_elevation(h, Hmin, Hmax):
     '''
@@ -498,10 +772,12 @@ def get_version_and_rgi_from_id(id):
         version_rgi = '70G'
         rgi = id[15:17]
 
+    else: raise ValueError("Glacier id starts with unexpected string. Exit.")
+
     return rgi, version_rgi
 
 
-def plot_feature_scatter(config, test_glacier):
+def plot_feature_scatter(feats, test_glacier):
     """
     Plot scatter plots for features in the given configuration against the glacier data.
 
@@ -510,7 +786,6 @@ def plot_feature_scatter(config, test_glacier):
     - test_glacier: A DataFrame containing 'lons', 'lats', and feature data.
 
     """
-    feats = config.features
     num_feats = len(feats)  # Number of features
     cols = 6
     rows = (num_feats // cols) + (num_feats % cols > 0)
@@ -520,6 +795,7 @@ def plot_feature_scatter(config, test_glacier):
 
     for idx, feat in enumerate(feats):
         sc = axes[idx].scatter(x=test_glacier['lons'], y=test_glacier['lats'], c=test_glacier[feat], s=1, cmap='jet')
+        cb = plt.colorbar(sc)
         axes[idx].set_xticks([])
         axes[idx].set_yticks([])
         axes[idx].tick_params(labelbottom=False, labelleft=False)
@@ -532,6 +808,158 @@ def plot_feature_scatter(config, test_glacier):
 
     plt.tight_layout()
     plt.show()
+
+def choose_grid_epsg(epsg_glacier=None, region=None, lat_max=None):
+    epsg_grid = None
+    if region == 5:
+        epsg_grid = 3413
+    elif region == 19 and lat_max < -60:
+        epsg_grid = 3031
+    else:
+        epsg_grid = epsg_glacier
+    assert isinstance(epsg_grid, int), f"Problems with choice of projection."
+    return epsg_grid
+
+def generate_points(gdf=None, epsg_glacier=None, region=None, resolution=None):
+
+    min_lon, min_lat, max_lon, max_lat = gdf.total_bounds
+
+    # Decide crs of grid
+    epsg_grid = choose_grid_epsg(epsg_glacier=epsg_glacier, region=region, lat_max=max_lat)
+
+    # Reproject geometries to grid crs
+    gdf_grid_crs = gdf.to_crs(epsg=epsg_grid)
+    minx, miny, maxx, maxy = gdf_grid_crs.total_bounds
+
+    spatial_posting = resolution + 1
+    minimum_no_points_in_box = 1e3
+    no_glaciers_covered = -999
+    points_inside = -999
+
+    while no_glaciers_covered != len(gdf_grid_crs) and spatial_posting > 1.:
+        spatial_posting -= 1.
+
+        # Create grid coordinates
+        xs = np.arange(minx+1, maxx-1, spatial_posting)
+        ys = np.arange(miny+1, maxy-1, spatial_posting)
+        xx, yy = np.meshgrid(xs, ys)
+        Nx, Ny = len(xs), len(ys)
+        if (Nx * Ny) < minimum_no_points_in_box:
+            continue
+
+        # Create dataframe of points in bounding box
+        points_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(xx.ravel(), yy.ravel()), crs=epsg_grid)
+
+        # Get only points inside the glacier(s)
+        points_inside = gpd.sjoin(points_gdf, gdf_grid_crs, predicate="within", how="inner")
+        # print(points_inside)
+
+        no_glaciers_covered = points_inside['index_right'].nunique()
+
+
+    assert not isinstance(points_inside, int), f"Problems with grid generation {gdf.index}."
+    assert no_glaciers_covered == len(gdf), "The generated grid does not cover all glaciers."
+
+    # Rename the index
+    points_inside = points_inside.rename(columns={'index_right': 'polygon'})
+
+    # Keep only the geometries and the glacier ids
+    points_inside = points_inside[['geometry', 'polygon']]
+
+    # We need to get the grid points in lat and lon
+    points_inside_4326 = points_inside.to_crs(epsg=4326)
+
+    # debug
+    #print("Final: ", spatial_posting, len(points_inside))
+    #fig, (ax1, ax2) = plt.subplots(1,2)
+    #gdf_grid_crs.plot(ax=ax1, edgecolor='black', facecolor='none')
+    #points_inside.plot(ax=ax1, marker='o', color='k', markersize=1)
+    #gdf.plot(ax=ax2, edgecolor='black', facecolor='none')
+    #points_inside_4326.plot(ax=ax2, marker='o', color='k', markersize=1)
+    #plt.show()
+
+    # Add lats and lons
+    points_inside["lons"] = points_inside_4326.geometry.x.values
+    points_inside["lats"] = points_inside_4326.geometry.y.values
+
+    # Store grid resolution in meters
+    points_inside.attrs["grid_resolution"] = spatial_posting
+
+    # reset index
+    points_inside = points_inside.reset_index(drop=True)
+
+    return points_inside
+
+def generate_points_on_grid_min_100meter(in_points_df=None, gdf=None, epsg=None, region=None):
+
+    #print(f"We have to generate grid points inside {len(gdf)} glacier(s)")
+
+    # Get the bounding box
+    minx, miny, maxx, maxy = gdf.total_bounds
+    delta_lon = maxx - minx
+    delta_lat = maxy - miny
+    mean_lat = 0.5 * (miny + maxy)
+    mean_lon = 0.5 * (minx + maxx)
+    #print(minx, miny, maxx, maxy)
+
+    spatial_posting = 100.
+    minimum_no_points_in_box = 1e4
+    lat_res = spatial_posting / 111320  # Latitude resolution in degrees
+    lon_res = spatial_posting / (111320 * np.cos(np.deg2rad(mean_lat)))  # Longitude resolution in degrees
+    Nx = int(delta_lon / lon_res)
+    Ny = int(delta_lat / lat_res)
+    no_glaciers_covered = -999
+    points_inside = -999
+
+    # If not all glaciers covered by grid, decrease grid spacing
+    #while (Nx * Ny) < minimum_no_points_in_box and spatial_posting > 2.:
+    while no_glaciers_covered != len(gdf) and spatial_posting > 1.:
+        spatial_posting -= 1.  # Decrease spatial posting
+        lat_res = spatial_posting / 111320  # Recalculate lat resolution
+        lon_res = spatial_posting / (111320 * np.cos(np.deg2rad(mean_lat)))  # Recalculate lon resolution
+        Nx = int(delta_lon / lon_res)  # Recalculate the number of points in the x direction
+        Ny = int(delta_lat / lat_res)  # Recalculate the number of points in the y direction
+        #print(f"lat_res: {lat_res} lon_res: {lon_res} posting {spatial_posting} {Nx*Ny}")
+        if (Nx * Ny) < minimum_no_points_in_box:
+            continue
+
+        # Create grid coordinates
+        xs = np.arange(minx, maxx, lon_res)
+        ys = np.arange(miny, maxy, lat_res)
+        xx, yy = np.meshgrid(xs, ys)
+
+        # Create dataframe of points in bounding box
+        points_gdf = gpd.GeoDataFrame(geometry=gpd.points_from_xy(xx.ravel(), yy.ravel()), crs=gdf.crs)
+
+        # Get only points inside the glacier(s)
+        points_inside = gpd.sjoin(points_gdf, gdf, predicate="within", how="inner")
+        #print(points_inside)
+
+        no_glaciers_covered = points_inside['index_right'].nunique()
+
+    #print(f"lat_res: {lat_res} lon_res: {lon_res} posting {spatial_posting}")
+    #print(points_inside, no_glaciers_covered)
+    assert not isinstance(points_inside, int), f"Problems with grid generation {gdf.index}."
+
+    # Rename the index
+    points_inside = points_inside.rename(columns={'index_right': 'polygon_index'})
+
+    assert len(points_inside) > 300, f"Generated too few points. Check point generation on grid: {mean_lat}-{mean_lon}"
+    assert len(points_inside) < 3e6, f"Generated too many points. Not a problem but carefully check if i need so many."
+    assert no_glaciers_covered == len(gdf), "The generated grid does not cover all glaciers."
+
+    #fig, ax = plt.subplots()
+    #points_inside.plot(ax=ax, color='red', markersize=1, alpha=0.2)
+    #gdf.plot(ax=ax, ec='b', fc='none')
+    #plt.show()
+
+    # Fill dataframe for output
+    in_points_df["lons"] = points_inside.geometry.x.values
+    in_points_df["lats"] = points_inside.geometry.y.values
+    in_points_df["polygon"] = points_inside.polygon_index.values
+    in_points_df["nunataks"] = 0.0
+
+    return in_points_df
 
 def generate_points_on_grid(gdf_ext=None, gdf_nuns=None, max_points=None):
 
@@ -596,7 +1024,7 @@ def generate_points_on_grid(gdf_ext=None, gdf_nuns=None, max_points=None):
     return points
 
 
-def generate_points(gdf_ext=None, gdf_nuns=None, n_points_regression=None, seed=None):
+def generate_points_old(gdf_ext=None, gdf_nuns=None, n_points_regression=None, seed=None):
 
     points = {'lons': [], 'lats': [], 'nunataks': []}
     if seed is not None: np.random.seed(seed)
@@ -651,7 +1079,7 @@ def generate_points(gdf_ext=None, gdf_nuns=None, n_points_regression=None, seed=
     return points
 
 
-def geographic_split_adaptive(glaciers_df, n_jobs, version):
+def geographic_split_adaptive(glaciers_df=None, n_jobs=None, version=None):
     """
     Split glaciers into n_jobs geographic chunks, adapting to aspect ratio.
     Args:
@@ -663,14 +1091,19 @@ def geographic_split_adaptive(glaciers_df, n_jobs, version):
 
     if version == '62':
         name_column_id = 'RGIId'
-        name_column_area = 'Area'
-        name_column_name = 'Name'
+        #name_column_area = 'Area'
+        #name_column_name = 'Name'
         name_column_lon, name_column_lat = 'CenLon', 'CenLat'
     elif version == '70G':
         name_column_id = 'rgi_id'
-        name_column_area = 'area_km2'
-        name_column_name = 'glac_name'
+        #name_column_area = 'area_km2'
+        #name_column_name = 'glac_name'
         name_column_lon, name_column_lat = 'cenlon', 'cenlat'
+
+    # Since some custom glacier ids may be present in glaciers_df (with no centers from rgi), let's calculate glacier centers
+    name_column_lon, name_column_lat = "centroid_lon", "centroid_lat"
+    glaciers_df[name_column_lon] = glaciers_df.geometry.representative_point().x
+    glaciers_df[name_column_lat] = glaciers_df.geometry.representative_point().y
 
     if n_jobs == 1:
         split_ids = glaciers_df[name_column_id].to_list()

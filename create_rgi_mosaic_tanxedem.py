@@ -35,6 +35,9 @@ def min_closest_multiple(num, res):
         return num - (num % 2)  # Rounds down to the nearest even multiple of num
     elif res == 4:
         return num - (num % 4)  # Rounds down to the nearest multiple of 4
+    else:
+        print("ERROR.")
+        return None
 
 
 def max_closest_multiple(num, res):
@@ -45,6 +48,9 @@ def max_closest_multiple(num, res):
         return num + (2 - num % 2)
     elif res == 4:
         return num + (4 - num % 4)
+    else:
+        print("ERROR.")
+        return None
 
 def getTDXlonres(lat):
     """Product Tile Extent
@@ -113,7 +119,7 @@ def create_glacier_tile_dem_mosaic(minx, miny, maxx, maxy, rgi, path_tandemx):
     # Look for the actual existing files from the possible codes
     matching_files = []
     for code in codes_tiles_for_mosaic:
-        matching_files.extend(glob.glob(f"{folder_rgi_tiles}TDM1_EDEM_10_*{code}*_V01_C/EDEM/*_W84.tif", recursive=False))
+        matching_files.extend(glob.glob(f"{folder_rgi_tiles}TDM1_EDEM_10_*{code}*_V0*/EDEM/*_W84.tif", recursive=False))
     #print(matching_files)
 
     # Create Mosaic
