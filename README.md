@@ -254,14 +254,15 @@ the Climate Change  AI Innovation Grants program, under the project ICENET.
 ## Citation
 If you found this code helpful, please consider citing:
 ```
-@Article{iceboost2024,
-    author = {Maffezzoli, N. and Rignot, E. and Barbante, C. and Petersen, T. and Vascon, S.},
-    title = {A gradient-boosted tree framework to model the ice thickness of the World's glaciers (IceBoost v1)},
-    journal = {EGUsphere},
-    volume = {2024},
-    year = {2024},
-    pages = {1--27},
-    url = {https://egusphere.copernicus.org/preprints/2024/egusphere-2024-2455/},
-    doi = {10.5194/egusphere-2024-2455}
+@Article{iceboost2025,
+    AUTHOR = {Maffezzoli, N. and Rignot, E. and Barbante, C. and Petersen, T. and Vascon, S.},
+    TITLE = {A gradient-boosted tree framework to model the ice thickness of the world's glaciers (IceBoost v1.1)},
+    JOURNAL = {Geoscientific Model Development},
+    VOLUME = {18},
+    YEAR = {2025},
+    NUMBER = {9},
+    PAGES = {2545--2568},
+    URL = {https://gmd.copernicus.org/articles/18/2545/2025/},
+    DOI = {10.5194/gmd-18-2545-2025}
 }
 ```
