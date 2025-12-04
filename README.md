@@ -4,8 +4,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13145836.svg)](https://doi.org/10.5281/zenodo.13145836)
 
-[[<u>PAPER PREPRINT</u>](https://egusphere.copernicus.org/preprints/2024/egusphere-2024-2455/)]
-[[<u>PDF</u>](https://egusphere.copernicus.org/preprints/2024/egusphere-2024-2455/egusphere-2024-2455.pdf)]✍️
+[[<u>PAPER</u>](https://gmd.copernicus.org/articles/18/2545/2025/)]✍️
 
 <h4 align="left">
 A Gradient-Boosted Tree framework 
