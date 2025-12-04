@@ -55,7 +55,15 @@ feature_human_names = {
 file_deploy = pd.read_csv(f'/home/maffe/PycharmProjects/iceboost/saved_iceboost/iceboost_deploy_list_id.csv', index_col='rgi')
 all_glacier_ids = file_deploy.values.flatten().tolist()
 
+# import training data
 glathida_rgis = pd.read_csv(config.metadata_csv_file, low_memory=False)
+
+# convert to geodataframe
+glathida_rgis = gpd.GeoDataFrame(
+    glathida_rgis,
+    geometry=gpd.points_from_xy(glathida_rgis['POINT_LON'], glathida_rgis['POINT_LAT']),
+    crs="EPSG:4326"
+)
 
 # Load the model(s)
 #iceboost_xgb, iceboost_cat = load_models(config)
@@ -921,9 +929,16 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
                 err_volID_bsl = dataID.loc[mask_bsl, "thickness_err"].sum() * f # hypothesis: fully correlated thickness
 
                 # Get ground truth measurements
-                # todo: I need to contemplate the case in which glacier in RGI70. glathida_rgis is built for RGI62
-                # todo: a better alternative would be to simply select all data within the glacier polygon
-                glathida_rgis_ID = glathida_rgis.loc[glathida_rgis['RGIId'] == glacierID]
+                if version == '62':
+                    # if we work with RGI62 we directly extract the points data from training dataset
+                    glathida_rgis_ID = glathida_rgis.loc[glathida_rgis['RGIId'] == glacierID]
+                elif version == '70G':
+                    # if we work with RGI7 we get points using the geometries
+                    # get 1-line dataframe for glacierID
+                    rgi_glaciers_ID = rgi_glaciers.loc[rgi_glaciers['rgi_id'] == glacierID]
+                    # get only points in training dataset that fall inside glacier geometry
+                    glathida_rgis_ID = glathida_rgis.sjoin(rgi_glaciers_ID, predicate="within")
+
                 ground_truth_lons = glathida_rgis_ID['POINT_LON'].to_list()
                 ground_truth_lats = glathida_rgis_ID['POINT_LAT'].to_list()
                 ground_truth_meas = glathida_rgis_ID['THICKNESS'].to_list()
@@ -970,7 +985,7 @@ def process_glacier(split_IDS, process_idx=None, processed_ids=None, lock=None):
 run_rgi_simulation_YN = True
 if run_rgi_simulation_YN:
     t0 = time.time()
-    rgi = 19
+    rgi = 13
     version = '70G'# '70G'
 
     print(f"Begin regional simulation for region {rgi}, version {version}")
@@ -1030,7 +1045,7 @@ if run_rgi_simulation_YN:
             #)
 
     else:
-        target = ['RGI60-07.01506'] # RGI60-07.00027 RGI60-07.01514 RGI60-07.00027
+        target = ['RGI60-11.01450'] # RGI60-07.00027 RGI60-07.01514 RGI60-07.00027
         #target = ['AntPen_7', 'AntPen_8', 'AntPen_9', 'AntPen_10', 'AntPen_11', 'AntPen_13', 'AntPen_14', 'AntPen_15', 'AntPen_16',
         #          'AntPen_20', 'AntPen_21', 'AntPen_22']
         glaciers_for_deploy = rgi_glaciers.loc[rgi_glaciers[name_column_id].isin(target)]

@@ -58,23 +58,11 @@ model_filename_xgb_without_v_with_lmax: 'iceboost_xgb_20251010_without_v_with_lm
 model_filename_cat_without_v_with_lmax: 'iceboost_cat_20251010_without_v_with_lmax.cbm'
 
 
-
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250407_hmineq1.0_tmin20050000_mean_grid_100.csv'
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250411_hmineq1.0_tmin20050000_mean_grid_100.csv'
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250425_hmineq1.0_tmin20050000_mean_grid_100.csv'
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250605_hmineq1.0_tmin20050000_mean_grid_100.csv'
-#metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250910_hmineq1.0_tmin20050000_mean_grid_100.csv'
+# Training dataset
 metadata_csv_file: '/media/maffe/nvme/iceboost_train_dataset/iceboost_train_20250927_hmineq1.0_tmin20050000_mean_grid_100.csv'
 
 # Global deploy
 deploy_global_save_figs: 1 # save regional run figures and tif
-#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250407/'
-#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250411/'
-#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250425/'
-#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250522/'
-#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250602/'
-#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250606/'
-#model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20250612/'
 model_output_global_deploy_dir: '/media/maffe/nvme/iceboost_global_deploy/iceboost_20251009/'
 
 
