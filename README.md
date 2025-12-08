@@ -2,7 +2,7 @@
     <img alt="Logo" src="img/logo_iceboost.svg" style="width: 100%; height: auto;" />
 </div>
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.13145836.svg)](https://doi.org/10.5281/zenodo.13145836) 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17724512.svg)](https://doi.org/10.5281/zenodo.17724512) 
 
 [[<u>PAPER</u>](https://gmd.copernicus.org/articles/18/2545/2025/)]✍️
 
@@ -216,14 +216,14 @@ To train the model, run:
 python iceboost_train.py
 ```
 This code trains a xgboost and catboost regression models. The trained models can be saved respectively 
-as ```.json``` and ```.cbm``` files. These have been deposited on [Zenodo](https://zenodo.org/records/13145836).
+as ```.json``` and ```.cbm``` files. These have been deposited on [Zenodo](https://doi.org/10.5281/zenodo.17724512).
 
 The code also contains a module to perform inference on a glacier, by specifying its RGI code.
 
 
 ## Model inference 🔮
 
-If you don't want to train the model but just run it, you can get the trained modules (```.json``` and ```.cbm```) from [Zenodo](https://zenodo.org/records/13145836),
+If you don't want to train the model but just run it, you can get the trained modules (```.json``` and ```.cbm```) from [Zenodo](https://doi.org/10.5281/zenodo.17724512),
 specify their names and location in the ```config/config.yaml```, under ```model_input_dir/```, ```model_filename_xgb```,
 ```model_filename_cat```
 and run:
