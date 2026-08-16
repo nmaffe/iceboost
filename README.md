@@ -2,7 +2,7 @@
     <img alt="Logo" src="img/logo_iceboost.svg" style="width: 100%; height: auto;" />
 </div>
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17724512.svg)](https://doi.org/10.5281/zenodo.17724512) 
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.17724512-blue.svg)](https://doi.org/10.5281/zenodo.17724512)
 
 [[<u>PAPER</u>]([https://gmd.copernicus.org/articles/18/2545/2025/](https://www.nature.com/articles/s41597-026-07744-9))]✍️
 
