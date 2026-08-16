@@ -6,7 +6,7 @@
 
 [[<u>PAPER</u>](https://gmd.copernicus.org/articles/18/2545/2025/)]✍️
 
-<div align="center">
+<div style="display: flex; flex-direction: column; align-items: center;">
   <h2 style="font-weight: normal; text-align: left;">
     A Gradient-Boosted Tree framework 
     to model the ice thickness of the World's glaciers
@@ -238,22 +238,34 @@ In ```config/config.yaml``` you can also specify the number of points you want t
 
 ## Acknowledgments
 
-<p align="left">
+<div style="display: flex; gap: 16px; align-items: center; justify-content: flex-start;">
   <a href="https://marie-sklodowska-curie-actions.ec.europa.eu/">
-    <img alt="EU" src="img/logo_MSCA.png" height="70" />
+    <img alt="EU" src="img/logo_MSCA.png" style="height: 70px; width: auto;" />
   </a>
   <a href="https://www.climatechange.ai/">
-    <img alt="CCAI" src="img/logo_CCAI.png" height="70" />
+    <img alt="CCAI" src="img/logo_CCAI.png" style="height: 70px; width: auto;" />
   </a>
-</p>
+</div>
 
 This work has received funding from the European Union’s Horizon 2020
 research and innovation programme, under the Marie Skłodowska-Curie 
 grant agreement No 101066651, project SKYNET. This work was also funded by 
 the Climate Change  AI Innovation Grants program, under the project ICENET.
 
-## Citation
+## References
 If you found this code helpful, please consider citing:
+```
+@article{maffezzoli2026,
+  title={Machine-learned global glacier ice volumes},
+  author={Maffezzoli, Niccol{\`o} and Rignot, Eric and Barbante, Carlo and Morlighem, Mathieu and Petersen, Troels C and Vascon, Sebastiano},
+  journal={Scientific Data},
+  volume={13},
+  number={1},
+  pages={1104},
+  year={2026},
+  publisher={Nature Publishing Group UK London}
+}
+```
 ```
 @Article{iceboost2025,
     AUTHOR = {Maffezzoli, N. and Rignot, E. and Barbante, C. and Petersen, T. and Vascon, S.},
