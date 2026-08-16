@@ -4,7 +4,7 @@
 
 [![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.17724512-blue.svg)](https://doi.org/10.5281/zenodo.17724512)
 
-[[<u>PAPER</u>]([https://gmd.copernicus.org/articles/18/2545/2025/](https://www.nature.com/articles/s41597-026-07744-9))]✍️
+[[<u>PAPER</u>](https://www.nature.com/articles/s41597-026-07744-9)] ✍️
 
 <div style="display: flex; flex-direction: column; align-items: center;">
   <h2 style="font-weight: normal; text-align: left;">
